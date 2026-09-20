@@ -3,7 +3,7 @@
 > **High-Fidelity Regulatory & SOP Precision Retrieval Engine for Biopharma CMC QA**  
 > 专为生物制药（CGT、抗体、疫苗等）与药监法规、GMP/SOP 打造的高保真、零幻觉精确检索增强引擎。
 
-[![CI](https://github.com/your-username/Pharm-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/Pharm-RAG/actions)
+[![CI](https://github.com/molezz/Pharm-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/molezz/Pharm-RAG/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![SQLite](https://img.shields.io/badge/sqlite-FTS5%20Trigram-green.svg)](https://www.sqlite.org/fts5.html)
@@ -77,7 +77,7 @@ flowchart TD
 ### 1. 安装方式
 
 #### 方式 A：直接下载预编译二进制包（推荐）
-从 [GitHub Releases](https://github.com/your-username/Pharm-RAG/releases) 页面下载对应操作系统的压缩包，解压后即可直接运行：
+从 [GitHub Releases](https://github.com/molezz/Pharm-RAG/releases) 页面下载对应操作系统的压缩包，解压后即可直接运行：
 ```bash
 # 解压即可使用
 tar -zxvf pharm-rag-linux-x86_64.tar.gz

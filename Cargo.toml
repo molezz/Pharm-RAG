@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Pharm-RAG Contributors"]
 description = "High-Fidelity Regulatory & SOP Retrieval Engine for Biopharma CMC QA"
 license = "Apache-2.0"
-repository = "https://github.com/your-username/Pharm-RAG"
+repository = "https://github.com/molezz/Pharm-RAG"
 keywords = ["biopharma", "regulatory", "gmp", "rag", "sqlite"]
 categories = ["command-line-utilities", "database-implementations"]
 
