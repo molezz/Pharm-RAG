@@ -1,7 +1,7 @@
 # Pharm-RAG 🧬⚖️
 
-> **High-Fidelity Regulatory & SOP Precision Retrieval Engine for Biopharma CMC QA**  
-> 专为生物制药（CGT、抗体、疫苗等）与药监法规、GMP/SOP 打造的高保真、零幻觉精确检索增强引擎。
+> **High-Fidelity Regulatory & SOP Precision Retrieval Engine for Biopharma CMC & GxP Quality Systems**  
+> 专为生物制药（CGT、抗体、疫苗等）与药监法规、GMP/GxP 质量体系打造的高保真、零幻觉精确检索增强引擎。
 
 [![CI](https://github.com/molezz/Pharm-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/molezz/Pharm-RAG/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -12,17 +12,17 @@
 
 ## 🌟 为什么需要 Pharm-RAG？（Why Pharm-RAG?）
 
-在生物医药质量保证（QA）与药学研究（CMC）审查场景下，通用开源 RAG（如 Dify、RagFlow、AnythingLLM）存在以下致命缺陷：
+在生物医药药学研究（CMC）与 GMP/GxP 质量体系审查场景下，通用开源 RAG（如 Dify、RagFlow、AnythingLLM）存在以下痛点：
 
-| 评估维度 | 通用商业 / 开源 RAG | **Pharm-RAG (本引擎)** | 药企审核实际价值 |
-| :--- | :--- | :--- | :--- |
-| **切块逻辑** | 机械字符切块（如每 500 字一刀，法条经常被拦腰截断） | **按《章-节-条-款-项》法律语法树（AST）切分** | 完整保留整条法规语义与从属约束 |
-| **证据追溯** | 返回孤立文本块，常遗漏具体规程出处 | **强挂载面包屑层级（Breadcrumbs）+ 页码** | 明确标明如 `《指南》> 第3章 > 第2节 > 第4条 [P.18]` |
-| **法规效力区分** | 混淆草案与正式版，容易引用过期草案 | **法规生命周期四级管理 (现行/试行/征求意见稿/废止)** | 现行版优先召回；检索到草案强制红标警示，支持 `--only-effective` 纯合规检索 |
-| **重复文件去重** | 重命名副本重复入库，导致搜索结果成倍冗余 | **基于 SHA-256 智能内容指纹去重** | 即使文件名不同（如 `指南.pdf` 与 `指南2026.pdf`），自动识别内容一致性并跳过 |
-| **医药专有名词召回** | 通用分词器切碎词汇（如 `CAR-T`、`慢病毒`、`支原体`） | **SQLite FTS5 Trigram + 短词降级兜底** | 100% 逐字精确匹配，零检索盲区 |
-| **响应速度与资源** | 需常驻庞大 Python 环境与外置向量库（数秒延迟，显存占用大） | **单二进制纯 Rust 编写，< 1ms 响应，内存 < 15MB** | AI Agent 批量调用数十次审查对比时毫无延迟感知 |
-| **数据隐私** | 需配置繁琐数据库集群或依赖公有云 | **单文件 SQLite 本地存储（Local-first）** | 敏感未公开 SOP、偏差审计记录绝不外泄 |
+| 评估维度 | 通用开源 / 商业 RAG | **Pharm-RAG (本引擎)** |
+| :--- | :--- | :--- |
+| **切块粒度** | 机械字符硬切（常截断法条） | **法律语法树（AST）切分**（章-节-条-款完整闭合） |
+| **溯源能力** | 孤立片段，出处模糊 | **强制挂载大纲层级面包屑 + 原文页码** |
+| **法规效力** | 草案与正式版混为一谈 | **四级生命周期管理**（现行/试行/征求意见稿清晰标识，可一键过滤草案） |
+| **文件去重** | 重命名文件重复入库致结果冗余 | **SHA-256 内容指纹去重**（改名不重录） |
+| **术语召回** | 分词截断专业缩写（如 CAR-T、RCL） | **FTS5 Trigram 逐字精准匹配**（< 1ms 响应） |
+| **语义与双语** | 依赖高延迟外置向量库 / 仅支持单语 | **内置 BGE-M3 + RRF 混合检索**（中文语义直接检索 FDA 英文指南） |
+| **数据安全** | 依赖云端或庞大微服务组件 | **嵌入式 SQLite 单文件本地运行**（敏感内控 SOP 零外泄） |
 
 ---
 
@@ -45,14 +45,15 @@ flowchart TD
         P5["法规效力状态智能判定 (Draft/Trial/Effective)"]
     end
 
-    subgraph Storage["3. 本地嵌入式存储 (SQLite FTS5)"]
+    subgraph Storage["3. 本地嵌入式存储 (SQLite FTS5 + 密集向量)"]
         DB[("pharm.db (单文件数据库)")]
         FTS["FTS5 Trigram 全文索引 + BM25"]
+        VEC["BGE-M3 语义向量表 (ONNX BLOB)"]
         META["法规效力状态 / 篇章结构 / 页码元数据"]
     end
 
     subgraph Interfaces["4. 交付与 Agent 接入"]
-        CLI["CLI 命令行 (pharm-rag search)"]
+        CLI["CLI 命令行 (精确 / Hybrid 混合检索)"]
         REST["本地极速 HTTP REST API (&lt;1ms)"]
         MCP["Model Context Protocol (MCP Server)"]
         WATCH["后台文件监听器 (Folder Watcher)"]
@@ -68,6 +69,7 @@ flowchart TD
 ## ✨ 核心特性（Features）
 
 - **单二进制零依赖（Single Binary）**：基于纯 Rust 编写，开箱即用，无需安装 Python、Node.js 或 Docker。
+- **本地 ONNX 跨语言 Hybrid 混合检索（BGE-M3 + RRF）**：内置多语言旗舰嵌入模型 BGE-M3，无需外挂庞大向量数据库；结合 Reciprocal Rank Fusion 算法将 Trigram 精确匹配与语义向量融合，实现“用中文语义直接召回 FDA 英文对应指南条款”。
 - **法规效力全生命周期管理（Regulatory Lifecycle）**：
   - 🟢 **`[现行正式版]`**：药监部门正式发布，最高法定效力；
   - 🟡 **`[试行版]`**：现行有效监管技术指导原则；
@@ -192,7 +194,7 @@ pharm-rag serve --port 8080
   "mcp_servers": {
     "pharm_rag": {
       "url": "http://127.0.0.1:8080/mcp",
-      "description": "Biopharma regulatory CMC QA retrieval engine"
+      "description": "Biopharma CMC & GxP regulatory retrieval engine"
     }
   }
 }
@@ -211,7 +213,7 @@ pharm-rag serve --port 8080
   }
 }
 ```
-配置完成后，AI Agent 在执行 CMC 方案审查或变更定性时，会自动调用 `search_regulations` 获取 100% 准确的法条原文与条款编号！如果引述了草案，Agent 会收到明确的效力预警。
+配置完成后，AI Agent 在执行 CMC 方案审查、偏差调查或 GxP 合规性定性时，会自动调用 `search_regulations` 获取 100% 准确的法条原文与条款编号！如果引述了草案，Agent 会收到明确的效力预警。
 
 ---
 
@@ -235,4 +237,4 @@ pharm-rag serve --port 8080
 ## 📄 开源许可证（License）
 
 本项目基于 [Apache-2.0 License](LICENSE) 协议开源。
-欢迎生物制药领域的研发、CMC、QA、注册及 AI 开发者共同贡献与完善！
+欢迎生物制药领域的研发、CMC、质量管理与合规（QA/QC/GxP）、注册及 AI 开发者共同贡献与完善！
