@@ -72,6 +72,13 @@ enum Commands {
     },
     /// Show database statistics and indexed regulations
     Stats,
+    /// Delete a regulation and its clauses from the database by title or path keyword
+    Delete {
+        /// Document title or path keyword to delete
+        target: String,
+    },
+    /// Prune orphaned database regulations whose local physical files have been deleted
+    Prune,
 }
 
 #[tokio::main]
@@ -182,6 +189,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  已切分法规条款: {}", clauses.to_string().cyan());
             println!("  语义向量覆盖率: {} / {} ({:.1}%)", embedded.to_string().green(), total_clauses, pct);
             println!("─────────────────────────────\n");
+        }
+        Commands::Delete { target } => {
+            let mut db = Database::open(&db_path)?;
+            let count = db.delete_document(&target)?;
+            if count > 0 {
+                println!("🗑️  {} 成功从数据库删除 {} 篇匹配文档及其关联条款与语义向量：'{}'",
+                    "删除成功:".bold().green(),
+                    count.to_string().cyan(),
+                    target
+                );
+            } else {
+                println!("⚠️  {} 未在数据库中找到匹配的法规文档：'{}'", "未找到:".yellow(), target);
+            }
+        }
+        Commands::Prune => {
+            let mut db = Database::open(&db_path)?;
+            println!("🔍 正在扫描数据库并对比本地磁盘物理文件...");
+            let pruned = db.prune_missing_documents()?;
+            if pruned.is_empty() {
+                println!("✨ 数据库处于完全同步状态，没有已删除文件的残留孤儿记录。");
+            } else {
+                println!("\n🧹 {} 已清理 {} 篇磁盘上已不存在的废弃法规：", "清理完成:".bold().green(), pruned.len().to_string().cyan());
+                for (title, path) in &pruned {
+                    println!("  - {} (原路径: {})", title.yellow(), path);
+                }
+                println!();
+            }
         }
     }
 

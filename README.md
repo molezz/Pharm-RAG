@@ -174,6 +174,15 @@ pharm-rag stats
 pharm-rag watch ./incoming_regulations/
 ```
 
+#### 🧹 清理废弃法规与数据库同步（Prune / Delete）
+```bash
+# 1. 物理文件删除后的一键同步清理：自动扫描数据库，彻底清理本地物理文件已被删除的孤儿法规及其条款与向量
+pharm-rag prune
+
+# 2. 精确指定删除某篇法规及其关联的所有条款与语义向量
+pharm-rag delete "已废止的旧指导原则标题或文件名关键字"
+```
+
 #### 🌐 启动本地极速 HTTP API & MCP Server
 ```bash
 pharm-rag serve --port 8080
