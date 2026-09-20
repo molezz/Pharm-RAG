@@ -171,40 +171,6 @@ impl Database {
         Ok(SaveOutcome::Saved { doc_id, clause_count: clauses.len() })
     }
 
-    /// Delete a document and all its clauses/embeddings by title or path keyword
-    pub fn delete_document(&mut self, query: &str) -> Result<usize> {
-        let pattern = format!("%{}%", query);
-        let count = self.conn.execute(
-            "DELETE FROM documents WHERE path = ?1 OR title = ?1 OR path LIKE ?2 OR title LIKE ?2",
-            params![query, pattern],
-        )?;
-        Ok(count)
-    }
-
-    /// Prune documents from the database whose physical files on disk have been removed
-    pub fn prune_missing_documents(&mut self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT id, title, path FROM documents")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        })?;
-
-        let mut to_delete = Vec::new();
-        for item in rows {
-            let (id, title, path_str) = item?;
-            let p = std::path::Path::new(&path_str);
-            if !p.exists() {
-                to_delete.push((id, title, path_str));
-            }
-        }
-
-        let mut pruned = Vec::new();
-        for (id, title, path_str) in to_delete {
-            self.conn.execute("DELETE FROM documents WHERE id = ?", params![id])?;
-            pruned.push((title, path_str));
-        }
-        Ok(pruned)
-    }
-
     /// Search clauses with Trigram FTS5 + Fallback for short keywords (<3 chars)
     /// Sort priority: effective/trial (现行/试行) > draft (征求意见稿) > superseded (已废止)
     pub fn search(&self, query: &str, limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
