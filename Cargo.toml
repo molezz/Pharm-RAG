@@ -3,10 +3,10 @@ name = "pharm-rag"
 version = "0.2.0"
 edition = "2021"
 authors = ["Pharm-RAG Contributors"]
-description = "High-Fidelity Regulatory & SOP Retrieval Engine for Biopharma CMC & GxP Quality Systems"
+description = "Pharmaceutical Regulatory and GxP SOP Retrieval Engine"
 license = "Apache-2.0"
 repository = "https://github.com/molezz/Pharm-RAG"
-keywords = ["biopharma", "regulatory", "gmp", "rag", "sqlite"]
+keywords = ["pharmaceutical", "regulatory", "gmp", "rag", "sqlite"]
 categories = ["command-line-utilities", "database-implementations"]
 
 [dependencies]

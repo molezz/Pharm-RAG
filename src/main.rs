@@ -6,7 +6,7 @@ use pharm_rag::storage::Database;
 
 #[derive(Parser)]
 #[command(name = "pharm-rag")]
-#[command(about = "High-Fidelity Regulatory & SOP Retrieval Engine for Biopharma CMC & GxP Quality Systems", long_about = None)]
+#[command(about = "Pharmaceutical Regulatory and GxP SOP Retrieval Engine", long_about = None)]
 #[command(version)]
 struct Cli {
     /// Custom path to SQLite database file
