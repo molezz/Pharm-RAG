@@ -37,15 +37,22 @@ fn test_database_fts5_and_fallback() {
 终产品应完成支原体与无菌检查。
 "#;
     let clauses = parser.parse("测试规程", sample);
-    db.save_document("测试规程", "sample.md", "hash1", &clauses).expect("Save doc failed");
+    db.save_document("测试规程", "sample.md", "hash1", "effective", &clauses).expect("Save doc failed");
 
     // Test 1: Trigram search (>= 3 chars)
-    let res1 = db.search("慢病毒", 5).expect("Search failed");
+    let res1 = db.search("慢病毒", 5, None).expect("Search failed");
     assert!(!res1.is_empty(), "Trigram should match 慢病毒");
     assert_eq!(res1[0].match_strategy, "FTS5_Trigram");
 
     // Test 2: Short keyword fallback (< 3 chars)
-    let res2 = db.search("滴度", 5).expect("Search failed");
+    let res2 = db.search("滴度", 5, None).expect("Search failed");
     assert!(!res2.is_empty(), "Fallback should match 2-char query 滴度");
     assert_eq!(res2[0].match_strategy, "Substring_LIKE_Fallback");
+}
+
+#[test]
+fn test_status_detection() {
+    assert_eq!(RegulatoryParser::detect_status("慢病毒载体RCL检测问题与解答（征求意见稿）", ""), "draft");
+    assert_eq!(RegulatoryParser::detect_status("细胞治疗药品药学变更研究技术指导原则（试行）", ""), "trial");
+    assert_eq!(RegulatoryParser::detect_status("中国药典四部通则", ""), "effective");
 }

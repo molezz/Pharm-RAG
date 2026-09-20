@@ -12,6 +12,7 @@ pub struct Clause {
     pub page_num: Option<i32>,
     pub content: String,
     pub table_data: Option<String>,
+    pub status: String, // "effective", "trial", "draft", "superseded"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +21,7 @@ pub struct DocumentMetadata {
     pub title: String,
     pub path: String,
     pub hash: String,
+    pub status: String,
     pub clause_count: usize,
     pub created_at: String,
 }

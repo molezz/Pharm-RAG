@@ -23,6 +23,9 @@ enum Commands {
     Ingest {
         /// File or folder path to ingest
         path: PathBuf,
+        /// Explicitly override status: effective, trial, draft, superseded
+        #[arg(long)]
+        status: Option<String>,
     },
     /// Search regulatory clauses with FTS5 Trigram precision & breadcrumb tracing
     Search {
@@ -31,6 +34,12 @@ enum Commands {
         /// Maximum number of clauses to return
         #[arg(short, long, default_value = "5")]
         limit: usize,
+        /// Filter by status: effective, trial, draft, superseded
+        #[arg(long)]
+        status: Option<String>,
+        /// Only show in-force regulations (effective and trial), filtering out drafts
+        #[arg(long)]
+        only_effective: bool,
         /// Output formatted JSON instead of human-readable text
         #[arg(long)]
         json: bool,
@@ -56,19 +65,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = cli.db;
 
     match cli.command {
-        Commands::Ingest { path } => {
+        Commands::Ingest { path, status } => {
             let mut db = Database::open(&db_path)?;
             if path.is_dir() {
                 println!("📂 Ingesting documents from directory: {}", path.display());
-                ingest_dir(&mut db, &path)?;
+                ingest_dir(&mut db, &path, status.as_deref())?;
             } else {
-                ingest_single_file(&mut db, &path)?;
+                ingest_single_file(&mut db, &path, status.as_deref())?;
             }
         }
-        Commands::Search { query, limit, json } => {
+        Commands::Search { query, limit, status, only_effective, json } => {
             let db = Database::open(&db_path)?;
+            let status_filter = if only_effective {
+                Some("effective")
+            } else {
+                status.as_deref()
+            };
+
             let start = std::time::Instant::now();
-            let results = db.search(&query, limit)?;
+            let results = db.search(&query, limit, status_filter)?;
             let elapsed = start.elapsed();
 
             if json {
@@ -76,13 +91,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("\n🔍 检索关键词: {} (耗时: {:.2?}, 命中文档条目: {})\n", query.bold().cyan(), elapsed, results.len());
                 for (i, res) in results.iter().enumerate() {
+                    let badge = match res.clause.status.as_str() {
+                        "draft" => "🔴 [征求意见稿 (非现行/仅供审评趋势参考)]".red().bold(),
+                        "trial" => "🟡 [试行版 (现行有效监管)]".yellow().bold(),
+                        "superseded" => "⚪ [已废止/历史版本]".white().dimmed(),
+                        _ => "🟢 [现行正式版]".green().bold(),
+                    };
+
                     println!("─────────────────────────────────────────────────────────────────");
-                    println!("【{}】 {}", i + 1, res.clause.breadcrumb.bold().green());
+                    println!("【{}】 {}  {}", i + 1, res.clause.breadcrumb.bold().cyan(), badge);
                     if let Some(p) = res.clause.page_num {
                         println!("📄 页码: 第 {} 页 | 召回策略: {}", p, res.match_strategy.yellow());
                     } else {
                         println!("📄 召回策略: {}", res.match_strategy.yellow());
                     }
+                    
+                    if res.clause.status == "draft" {
+                        println!("{}", "⚠️ 提示：该条款来自征求意见稿，正式申报与GMP合规请核对现行版指导原则。".red());
+                    }
+
                     println!("\n{}", res.clause.content);
                     println!();
                 }
@@ -97,11 +124,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Stats => {
             let db = Database::open(&db_path)?;
-            let (docs, clauses) = db.get_stats()?;
+            let (docs, clauses, effective, draft) = db.get_stats()?;
             println!("\n📊 {} 状态统计", "Pharm-RAG".bold().green());
             println!("─────────────────────────────");
-            println!("  数据库文件:   {}", db_path.display());
-            println!("  已索引文档数: {}", docs.to_string().cyan());
+            println!("  数据库文件:     {}", db_path.display());
+            println!("  已索引文档总数: {}", docs.to_string().cyan());
+            println!("    ├─ 现行/试行版: {}", effective.to_string().green());
+            println!("    └─ 征求意见稿: {}", draft.to_string().yellow());
             println!("  已切分法规条款: {}", clauses.to_string().cyan());
             println!("─────────────────────────────\n");
         }
@@ -110,17 +139,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn ingest_single_file(db: &mut Database, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn ingest_single_file(db: &mut Database, path: &Path, override_status: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("文档");
     println!("⏳ Parsing {}...", path.display());
-    let clauses = parse_file(path)?;
+    let mut clauses = parse_file(path)?;
     let p_str = path.to_string_lossy();
-    db.save_document(title, &p_str, "hash_placeholder", &clauses)?;
-    println!("✅ 成功录入: {} (共切分出 {} 条法规条款)", title.bold().green(), clauses.len());
+    
+    let status = if let Some(s) = override_status {
+        for c in &mut clauses {
+            c.status = s.to_string();
+        }
+        s
+    } else {
+        clauses.first().map(|c| c.status.as_str()).unwrap_or("effective")
+    };
+
+    db.save_document(title, &p_str, "hash_placeholder", status, &clauses)?;
+    println!("✅ 成功录入: {} [{}] (共切分出 {} 条法规条款)", title.bold().green(), status.yellow(), clauses.len());
     Ok(())
 }
 
-fn ingest_dir(db: &mut Database, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn ingest_dir(db: &mut Database, dir: &Path, override_status: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let entries = std::fs::read_dir(dir)?;
     let mut total_files = 0;
     let mut total_clauses = 0;
@@ -131,12 +170,21 @@ fn ingest_dir(db: &mut Database, dir: &Path) -> Result<(), Box<dyn std::error::E
             let ext_lower = ext.to_lowercase();
             if ["pdf", "docx", "md", "txt"].contains(&ext_lower.as_str()) {
                 let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("文档");
-                if let Ok(clauses) = parse_file(&path) {
+                if let Ok(mut clauses) = parse_file(&path) {
                     let p_str = path.to_string_lossy();
-                    if db.save_document(title, &p_str, "hash_placeholder", &clauses).is_ok() {
+                    let status = if let Some(s) = override_status {
+                        for c in &mut clauses {
+                            c.status = s.to_string();
+                        }
+                        s
+                    } else {
+                        clauses.first().map(|c| c.status.as_str()).unwrap_or("effective")
+                    };
+
+                    if db.save_document(title, &p_str, "hash_placeholder", status, &clauses).is_ok() {
                         total_files += 1;
                         total_clauses += clauses.len();
-                        println!("  ✓ 已索引: {} ({} 条目)", title, clauses.len());
+                        println!("  ✓ 已索引: {} [{}] ({} 条目)", title, status.yellow(), clauses.len());
                     }
                 }
             }

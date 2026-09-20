@@ -18,6 +18,7 @@ pub struct AppState {
 pub struct SearchParams {
     pub q: String,
     pub limit: Option<usize>,
+    pub status: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -31,6 +32,8 @@ pub struct SearchApiResponse {
 pub struct StatsApiResponse {
     pub total_documents: usize,
     pub total_clauses: usize,
+    pub effective_documents: usize,
+    pub draft_documents: usize,
     pub version: &'static str,
 }
 
@@ -59,7 +62,8 @@ async fn search_handler(
 ) -> Result<Json<SearchApiResponse>, StatusCode> {
     let limit = params.limit.unwrap_or(10);
     let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let results = db.search(&params.q, limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let status_filter = params.status.as_deref();
+    let results = db.search(&params.q, limit, status_filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(SearchApiResponse {
         query: params.q,
@@ -72,11 +76,13 @@ async fn stats_handler(
     State(state): State<AppState>,
 ) -> Result<Json<StatsApiResponse>, StatusCode> {
     let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (docs, clauses) = db.get_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (docs, clauses, effective, draft) = db.get_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(StatsApiResponse {
         total_documents: docs,
         total_clauses: clauses,
+        effective_documents: effective,
+        draft_documents: draft,
         version: env!("CARGO_PKG_VERSION"),
     }))
 }
@@ -127,11 +133,19 @@ async fn mcp_handler(
                 .unwrap_or(5) as usize;
 
             let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            let results = db.search(query, limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let results = db.search(query, limit, None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let formatted: Vec<String> = results.into_iter().map(|r| {
+                let status_badge = match r.clause.status.as_str() {
+                    "draft" => "⚠️【征求意见稿 - 仅供审评趋势参考，非正式生效版本】",
+                    "trial" => "🟡【试行版】",
+                    "superseded" => "⚪【已废止/已被新版替代】",
+                    _ => "🟢【现行有效】",
+                };
+
                 format!(
-                    "【法规出处】: {}\n【页码】: {}\n【条款内容】:\n{}\n---",
+                    "【法规效力】: {}\n【出处层级】: {}\n【页码】: {}\n【条款内容】:\n{}\n---",
+                    status_badge,
                     r.clause.breadcrumb,
                     r.clause.page_num.map_or("未知".to_string(), |p| p.to_string()),
                     r.clause.content

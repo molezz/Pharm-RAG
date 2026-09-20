@@ -37,6 +37,7 @@ impl Database {
                 title TEXT NOT NULL,
                 path TEXT NOT NULL UNIQUE,
                 hash TEXT,
+                status TEXT NOT NULL DEFAULT 'effective',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );",
             [],
@@ -55,10 +56,15 @@ impl Database {
                 page_num INTEGER,
                 content TEXT NOT NULL,
                 table_data TEXT,
+                status TEXT NOT NULL DEFAULT 'effective',
                 FOREIGN KEY(doc_id) REFERENCES documents(id) ON DELETE CASCADE
             );",
             [],
         )?;
+
+        // Migrate older databases if status column is missing
+        let _ = self.conn.execute("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'effective'", []);
+        let _ = self.conn.execute("ALTER TABLE clauses ADD COLUMN status TEXT DEFAULT 'effective'", []);
 
         // FTS5 Trigram virtual table for full-text search
         self.conn.execute(
@@ -95,15 +101,15 @@ impl Database {
     }
 
     /// Insert or update a document and its clauses
-    pub fn save_document(&mut self, title: &str, path: &str, hash: &str, clauses: &[Clause]) -> Result<i64> {
+    pub fn save_document(&mut self, title: &str, path: &str, hash: &str, status: &str, clauses: &[Clause]) -> Result<i64> {
         let tx = self.conn.transaction()?;
 
         // Delete existing doc if present
         tx.execute("DELETE FROM documents WHERE path = ?", params![path])?;
 
         tx.execute(
-            "INSERT INTO documents (title, path, hash) VALUES (?, ?, ?)",
-            params![title, path, hash],
+            "INSERT INTO documents (title, path, hash, status) VALUES (?, ?, ?, ?)",
+            params![title, path, hash, status],
         )?;
         let doc_id = tx.last_insert_rowid();
 
@@ -111,8 +117,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO clauses (
                     doc_id, doc_title, chapter, section, article,
-                    breadcrumb, page_num, content, table_data
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    breadcrumb, page_num, content, table_data, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     doc_id,
                     clause.doc_title,
@@ -123,6 +129,7 @@ impl Database {
                     clause.page_num,
                     clause.content,
                     clause.table_data,
+                    clause.status,
                 ],
             )?;
         }
@@ -132,7 +139,8 @@ impl Database {
     }
 
     /// Search clauses with Trigram FTS5 + Fallback for short keywords (<3 chars)
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    /// Sort priority: effective/trial (现行/试行) > draft (征求意见稿) > superseded (已废止)
+    pub fn search(&self, query: &str, limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -143,21 +151,32 @@ impl Database {
 
         // Strategy 1: FTS5 Trigram MATCH if 3 or more characters
         if char_count >= 3 {
-            // Escape double quotes for FTS5
             let clean_query = trimmed.replace('"', "\"\"");
             let match_expr = format!("\"{}\"", clean_query);
 
-            let mut stmt = self.conn.prepare(
-                "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
-                        c.breadcrumb, c.page_num, c.content, c.table_data, bm25(clauses_fts) as score
-                 FROM clauses_fts
-                 JOIN clauses c ON c.id = clauses_fts.rowid
-                 WHERE clauses_fts MATCH ?
-                 ORDER BY score ASC
-                 LIMIT ?"
-            )?;
+            let sql = match status_filter {
+                Some(_) => {
+                    "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
+                            c.breadcrumb, c.page_num, c.content, c.table_data, c.status, bm25(clauses_fts) as score
+                     FROM clauses_fts
+                     JOIN clauses c ON c.id = clauses_fts.rowid
+                     WHERE clauses_fts MATCH ? AND c.status = ?
+                     ORDER BY CASE c.status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, score ASC
+                     LIMIT ?"
+                }
+                None => {
+                    "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
+                            c.breadcrumb, c.page_num, c.content, c.table_data, c.status, bm25(clauses_fts) as score
+                     FROM clauses_fts
+                     JOIN clauses c ON c.id = clauses_fts.rowid
+                     WHERE clauses_fts MATCH ?
+                     ORDER BY CASE c.status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, score ASC
+                     LIMIT ?"
+                }
+            };
 
-            let rows = stmt.query_map(params![match_expr, limit as i64], |row| {
+            let mut stmt = self.conn.prepare(sql)?;
+            let map_fn = |row: &rusqlite::Row| {
                 Ok((
                     Clause {
                         id: row.get(0)?,
@@ -170,10 +189,17 @@ impl Database {
                         page_num: row.get(7)?,
                         content: row.get(8)?,
                         table_data: row.get(9)?,
+                        status: row.get(10)?,
                     },
-                    row.get::<_, f64>(10)?,
+                    row.get::<_, f64>(11)?,
                 ))
-            });
+            };
+
+            let rows = if let Some(sf) = status_filter {
+                stmt.query_map(params![match_expr, sf, limit as i64], map_fn)
+            } else {
+                stmt.query_map(params![match_expr, limit as i64], map_fn)
+            };
 
             if let Ok(iter) = rows {
                 for item in iter.flatten() {
@@ -189,16 +215,27 @@ impl Database {
         // Strategy 2: Fallback to exact LIKE if <3 chars OR Trigram returned 0 results
         if results.is_empty() {
             let like_pattern = format!("%{}%", trimmed);
-            let mut stmt = self.conn.prepare(
-                "SELECT id, doc_id, doc_title, chapter, section, article,
-                        breadcrumb, page_num, content, table_data
-                 FROM clauses
-                 WHERE content LIKE ? OR breadcrumb LIKE ?
-                 ORDER BY id ASC
-                 LIMIT ?"
-            )?;
+            let sql = match status_filter {
+                Some(_) => {
+                    "SELECT id, doc_id, doc_title, chapter, section, article,
+                            breadcrumb, page_num, content, table_data, status
+                     FROM clauses
+                     WHERE (content LIKE ? OR breadcrumb LIKE ?) AND status = ?
+                     ORDER BY CASE status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, id ASC
+                     LIMIT ?"
+                }
+                None => {
+                    "SELECT id, doc_id, doc_title, chapter, section, article,
+                            breadcrumb, page_num, content, table_data, status
+                     FROM clauses
+                     WHERE content LIKE ? OR breadcrumb LIKE ?
+                     ORDER BY CASE status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, id ASC
+                     LIMIT ?"
+                }
+            };
 
-            let rows = stmt.query_map(params![like_pattern, like_pattern, limit as i64], |row| {
+            let mut stmt = self.conn.prepare(sql)?;
+            let map_fn = |row: &rusqlite::Row| {
                 Ok(Clause {
                     id: row.get(0)?,
                     doc_id: row.get(1)?,
@@ -210,8 +247,15 @@ impl Database {
                     page_num: row.get(7)?,
                     content: row.get(8)?,
                     table_data: row.get(9)?,
+                    status: row.get(10)?,
                 })
-            })?;
+            };
+
+            let rows = if let Some(sf) = status_filter {
+                stmt.query_map(params![like_pattern, like_pattern, sf, limit as i64], map_fn)?
+            } else {
+                stmt.query_map(params![like_pattern, like_pattern, limit as i64], map_fn)?
+            };
 
             for item in rows.flatten() {
                 results.push(SearchResult {
@@ -225,10 +269,12 @@ impl Database {
         Ok(results)
     }
 
-    /// Retrieve summary statistics
-    pub fn get_stats(&self) -> Result<(usize, usize)> {
+    /// Retrieve summary statistics with status breakdown
+    pub fn get_stats(&self) -> Result<(usize, usize, usize, usize)> {
         let doc_count: usize = self.conn.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
         let clause_count: usize = self.conn.query_row("SELECT COUNT(*) FROM clauses", [], |r| r.get(0))?;
-        Ok((doc_count, clause_count))
+        let draft_count: usize = self.conn.query_row("SELECT COUNT(*) FROM documents WHERE status = 'draft'", [], |r| r.get(0))?;
+        let effective_count: usize = self.conn.query_row("SELECT COUNT(*) FROM documents WHERE status IN ('effective', 'trial')", [], |r| r.get(0))?;
+        Ok((doc_count, clause_count, effective_count, draft_count))
     }
 }

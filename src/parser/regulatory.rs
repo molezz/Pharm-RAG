@@ -5,6 +5,7 @@ pub struct RegulatoryParser {
     re_chapter: Regex,
     re_section: Regex,
     re_article: Regex,
+    re_noise: Regex,
 }
 
 impl Default for RegulatoryParser {
@@ -16,17 +17,41 @@ impl Default for RegulatoryParser {
 impl RegulatoryParser {
     pub fn new() -> Self {
         Self {
-            // 第X章 或 一、概况
-            re_chapter: Regex::new(r"^(第[一二三四五六七八九十百]+章|[一二三四五六七八九十]+、)\s*(.*)$").unwrap(),
-            // 第X节 或 (一) 生产与质控
-            re_section: Regex::new(r"^(第[一二三四五六七八九十]+节|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\))\s*(.*)$").unwrap(),
-            // 第X条 或 1. 原材料控制
-            re_article: Regex::new(r"^(第[一二三四五六七八九十百]+条|\d+[\.、])\s*(.*)$").unwrap(),
+            // 中文：第X章 或 一、概况
+            // 英文：CHAPTER I, SECTION II, I. INTRODUCTION, II. BACKGROUND
+            re_chapter: Regex::new(r"(?i)^(第[一二三四五六七八九十百]+章|[一二三四五六七八九十]+、|(CHAPTER|SECTION)\s+[IVXLCDM\d]+|[IVXLCDM]+\.\s+([A-Z\s]{3,}))\s*(.*)$").unwrap(),
+            
+            // 中文：第X节 或 （一）生产与质控
+            // 英文：A. Personnel, B. QC Function
+            re_section: Regex::new(r"^(第[一二三四五六七八九十]+节|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|[A-Z]\.\s+[A-Za-z].*)$").unwrap(),
+            
+            // 中文：第X条 或 1. 原材料控制
+            // 英文：Q1., Q2., Question 1., 1. Testing, 2. Stability
+            re_article: Regex::new(r"(?i)^(第[一二三四五六七八九十百]+条|\d+[\.、]|Q\d+[\.:\s]|Question\s*\d+[\.:\s])\s*(.*)$").unwrap(),
+
+            // 过滤页眉页脚噪点
+            re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|\d+\s*/\s*\d+|April 25, 2023|June 8, 2023)$").unwrap(),
+        }
+    }
+
+    /// Automatically determine regulatory lifecycle status
+    pub fn detect_status(doc_title: &str, raw_text: &str) -> String {
+        let lower_title = doc_title.to_lowercase();
+        let sample_str: String = raw_text.chars().take(800).collect();
+        let sample = sample_str.to_lowercase();
+
+        if lower_title.contains("征求意见稿") || sample.contains("征求意见稿") || lower_title.contains("draft") || sample.contains("draft guidance") {
+            "draft".to_string()
+        } else if lower_title.contains("试行") || sample.contains("（试行）") || sample.contains("(试行)") || lower_title.contains("interim") || lower_title.contains("trial") {
+            "trial".to_string()
+        } else {
+            "effective".to_string()
         }
     }
 
     /// Parse document text into clauses with breadcrumb hierarchy
     pub fn parse(&self, doc_title: &str, raw_text: &str) -> Vec<Clause> {
+        let status = Self::detect_status(doc_title, raw_text);
         let mut clauses = Vec::new();
         let mut current_chapter = String::new();
         let mut current_section = String::new();
@@ -34,7 +59,7 @@ impl RegulatoryParser {
         let mut current_lines = Vec::new();
         let mut current_page: Option<i32> = None;
 
-        let re_page = Regex::new(r"\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---").unwrap();
+        let re_page = Regex::new(r"\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|(?m)^\s*(\d+)\s*$").unwrap();
 
         let flush_clause = |clauses: &mut Vec<Clause>,
                             chapter: &str,
@@ -67,6 +92,7 @@ impl RegulatoryParser {
                     page_num: page,
                     content,
                     table_data: None,
+                    status: status.clone(),
                 });
             }
             lines.clear();
@@ -78,14 +104,19 @@ impl RegulatoryParser {
                 continue;
             }
 
+            // Filter repeating header/footer noise
+            if self.re_noise.is_match(trimmed) {
+                continue;
+            }
+
             // Check for page marker
             if let Some(caps) = re_page.captures(trimmed) {
                 if let Some(p) = caps.get(1).or_else(|| caps.get(2)) {
                     if let Ok(num) = p.as_str().parse::<i32>() {
                         current_page = Some(num);
+                        continue;
                     }
                 }
-                continue;
             }
 
             // Check Chapter
@@ -105,10 +136,18 @@ impl RegulatoryParser {
                 continue;
             }
 
-            // Check Article
+            // Check Article / FAQ Question
             if let Some(caps) = self.re_article.captures(trimmed) {
                 flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
                 current_article = caps.get(0).map_or("", |m| m.as_str()).to_string();
+                current_lines.push(trimmed.to_string());
+                continue;
+            }
+
+            // Town hall / transcript special: Italicized or bold questions ending with ?
+            if trimmed.ends_with('?') && (trimmed.starts_with("What") || trimmed.starts_with("How") || trimmed.starts_with("Can") || trimmed.starts_with("Is") || trimmed.starts_with("Could")) {
+                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                current_article = trimmed.to_string();
                 current_lines.push(trimmed.to_string());
                 continue;
             }
@@ -136,6 +175,7 @@ impl RegulatoryParser {
                         page_num: current_page,
                         content: trimmed.to_string(),
                         table_data: None,
+                        status: status.clone(),
                     });
                 }
             }

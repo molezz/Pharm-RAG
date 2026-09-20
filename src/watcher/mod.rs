@@ -29,8 +29,9 @@ pub fn watch_directory<P: AsRef<Path>>(dir_path: P, db_path: PathBuf) -> Result<
                                 Ok(clauses) => {
                                     let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("法规");
                                     let p_str = path.to_string_lossy();
-                                    match db.save_document(title, &p_str, "hash_auto", &clauses) {
-                                        Ok(_) => println!("✅ Successfully auto-ingested {} clauses from {}", clauses.len(), title),
+                                    let status = clauses.first().map(|c| c.status.as_str()).unwrap_or("effective");
+                                    match db.save_document(title, &p_str, "hash_auto", status, &clauses) {
+                                        Ok(_) => println!("✅ Successfully auto-ingested {} clauses [{}] from {}", clauses.len(), status, title),
                                         Err(e) => eprintln!("❌ Database error saving {}: {}", title, e),
                                     }
                                 }
