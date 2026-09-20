@@ -247,13 +247,14 @@ impl Database {
 
         // Strategy 2: Fallback to exact LIKE if <3 chars OR Trigram returned 0 results
         if results.is_empty() {
-            let like_pattern = format!("%{}%", trimmed);
+            let escaped = escape_like(trimmed);
+            let like_pattern = format!("%{}%", escaped);
             let sql = match status_filter {
                 Some(_) => {
                     "SELECT id, doc_id, doc_title, chapter, section, article,
                             breadcrumb, page_num, content, table_data, status
                      FROM clauses
-                     WHERE (content LIKE ? OR breadcrumb LIKE ?) AND status = ?
+                     WHERE (content LIKE ? ESCAPE '\\' OR breadcrumb LIKE ? ESCAPE '\\') AND status = ?
                      ORDER BY CASE status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, id ASC
                      LIMIT ?"
                 }
@@ -261,7 +262,7 @@ impl Database {
                     "SELECT id, doc_id, doc_title, chapter, section, article,
                             breadcrumb, page_num, content, table_data, status
                      FROM clauses
-                     WHERE content LIKE ? OR breadcrumb LIKE ?
+                     WHERE content LIKE ? ESCAPE '\\' OR breadcrumb LIKE ? ESCAPE '\\'
                      ORDER BY CASE status WHEN 'effective' THEN 1 WHEN 'trial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END ASC, id ASC
                      LIMIT ?"
                 }
@@ -341,6 +342,11 @@ impl Database {
 
     /// Dense semantic vector search using cosine similarity
     pub fn search_vector(&self, query_vector: &[f32], limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
+        if limit == 0 || query_vector.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = limit.min(1000);
+
         let sql = match status_filter {
             Some(_) => {
                 "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
@@ -518,4 +524,12 @@ pub fn compute_file_hash(path: &std::path::Path) -> String {
     }
     "hash_fallback".to_string()
 }
+
+/// Escape SQLite LIKE wildcard characters (%, _, \)
+pub fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('%', "\\%")
+     .replace('_', "\\_")
+}
+
 

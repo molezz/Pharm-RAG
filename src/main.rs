@@ -66,9 +66,15 @@ enum Commands {
     },
     /// Start local HTTP REST API & MCP Server for Agent integration
     Serve {
+        /// Host address to bind (default: 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// Port to listen on
         #[arg(short, long, default_value = "8080")]
         port: u16,
+        /// Optional API Key for Bearer token authentication (or set PHARM_RAG_API_KEY env var)
+        #[arg(long)]
+        api_key: Option<String>,
     },
     /// Show database statistics and indexed regulations
     Stats,
@@ -163,9 +169,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Watch { dir } => {
             pharm_rag::watcher::watch_directory(dir, db_path)?;
         }
-        Commands::Serve { port } => {
+        Commands::Serve { host, port, api_key } => {
+            let api_key = api_key.or_else(|| std::env::var("PHARM_RAG_API_KEY").ok());
             let db = Database::open(&db_path)?;
-            pharm_rag::server::run_server(db, port).await?;
+            pharm_rag::server::run_server(db, &host, port, api_key).await?;
         }
         Commands::Stats => {
             let db = Database::open(&db_path)?;

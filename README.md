@@ -20,7 +20,7 @@
 | **溯源能力** | 孤立片段，出处模糊 | **挂载大纲层级面包屑 + 原文页码** |
 | **法规效力** | 草案与正式版混为一谈 | **四级生命周期管理**（现行/试行/征求意见稿清晰标识，可过滤草案） |
 | **文件去重** | 重命名文件重复入库致结果冗余 | **SHA-256 内容指纹去重**（改名不重录） |
-| **术语召回** | 分词截断专业缩写（如 CAR-T、RCL） | **FTS5 Trigram 逐字精准匹配**（< 1ms 响应） |
+| **术语召回** | 分词截断专业缩写（如 CAR-T、RCL） | **FTS5 Trigram 逐字精准匹配**（毫秒级响应，通常 < 5ms） |
 | **语义与双语** | 依赖外置向量库 / 仅支持单语 | **内置 BGE-M3 + RRF 混合检索**（中文语义直接检索 FDA 英文指南） |
 | **数据安全** | 依赖云端或微服务组件 | **嵌入式 SQLite 单文件本地运行**（内控规程数据完全本地化） |
 
@@ -54,7 +54,7 @@ flowchart TD
 
     subgraph Interfaces["4. 交付与 Agent 接入"]
         CLI["CLI 命令行 (精确 / Hybrid 混合检索)"]
-        REST["本地 HTTP REST API (&lt;1ms)"]
+        REST["本地 HTTP REST API (毫秒级响应)"]
         MCP["Model Context Protocol (MCP Server)"]
         WATCH["后台文件监听器 (Folder Watcher)"]
     end
@@ -68,7 +68,7 @@ flowchart TD
 
 ## ✨ 核心特性（Features）
 
-- **单二进制零依赖（Single Binary）**：基于 Rust 编写，开箱即用，无需安装 Python、Node.js 或 Docker。
+- **嵌入式本地运行（无需外置数据库）**：基于 Rust 与 SQLite 编写，开箱即用，无需配置复杂的外部服务或数据库。
 - **本地 ONNX 跨语言 Hybrid 混合检索（BGE-M3 + RRF）**：内置多语言模型 BGE-M3，结合 Reciprocal Rank Fusion 算法将 Trigram 精确匹配与语义向量融合，支持中文语义检索 FDA/EMA 英文指南。
 - **法规效力全生命周期管理（Regulatory Lifecycle）**：
   - 🟢 **`[现行正式版]`**：药监部门正式发布，法定生效标准；
@@ -174,46 +174,116 @@ pharm-rag stats
 pharm-rag watch ./incoming_regulations/
 ```
 
-#### 🌐 启动本地 HTTP API & MCP Server
+#### 🌐 启动本地 HTTP API & MCP Server（支持安全鉴权与本地绑定）
 ```bash
-pharm-rag serve --port 8080
+# 默认仅绑定本地 127.0.0.1，保障企业规程内网安全
+pharm-rag serve --host 127.0.0.1 --port 8080
+
+# 可选：开启 Bearer Token 访问控制（亦可通过环境变量 export PHARM_RAG_API_KEY=your-secret）
+pharm-rag serve --host 127.0.0.1 --port 8080 --api-key "my-secure-token"
 ```
-- **REST 检索接口**：`GET http://localhost:8080/api/v1/search?q=慢病毒滴度&hybrid=true`
-- **状态统计接口**：`GET http://localhost:8080/api/v1/stats`
-- **MCP 服务端点**：`POST http://localhost:8080/mcp`（供 AI Agent 调用 `search_regulations` 工具）
+- **REST 检索接口**：`GET http://127.0.0.1:8080/api/v1/search?q=慢病毒滴度&limit=3`
+- **状态统计接口**：`GET http://127.0.0.1:8080/api/v1/stats`
+- **MCP 服务端点**：`POST http://127.0.0.1:8080/mcp`（供 AI Agent 调用 `search_regulations` 工具）
 
 ---
 
-## 🤖 接入 AI Agent（MCP 配置示例）
+## 🤖 AI Agent 接入指引 (Agent-Ready Protocol)
 
-### 1. 接入 Hermes Agent / Open-WebUI
-在 Hermes 的 MCP 工具配置（或 `hermes_config.json`）中添加本地服务端点：
+Pharm-RAG 专为 AI Agent（Hermes、Antigravity、Pi、Claude、Cursor 等）设计，支持三种灵活接入方式：
 
+### 方式 1：CLI JSON 模式（推荐用于具身/命令行 Agent）
+若 Agent 拥有 Shell/Bash 执行环境（如 Hermes、AGY、Pi），直接调用命令行并追加 `--json` 参数即可获得结构化数据：
+
+```bash
+pharm-rag search "无菌检查 规程" --limit 3 --json
+```
+
+**返回的 JSON 结构规范：**
+```json
+[
+  {
+    "clause": {
+      "id": 42,
+      "doc_id": 2,
+      "doc_title": "体外基因修饰系统药学研究与评价技术指导原则",
+      "chapter": "第三章 生产工艺与过程控制",
+      "section": "第二节 原液与制剂生产",
+      "article": "第十五条",
+      "breadcrumb": "体外基因修饰系统药学研究与评价技术指导原则 > 第三章 生产工艺与过程控制 > 第二节 原液与制剂生产 > 第十五条",
+      "page_num": 14,
+      "content": "终产品无菌检查应符合中国药典现行版通则要求，对于批量较小或具有时效限制的细胞治疗产品...",
+      "table_data": null,
+      "status": "effective"
+    },
+    "score": -2.85,
+    "match_strategy": "FTS5_Trigram"
+  }
+]
+```
+> **字段效力说明**：
+> - `clause.status` 包含四种枚举：`effective`（现行）、`trial`（试行）、`draft`（征求意见稿）、`superseded`（已废止）。
+> - Agent 可通过 `--only-effective` 标志在查询时直接过滤草案与历史版本。
+
+---
+
+### 方式 2：REST API 模式（适用于 Web 应用与微服务 Agent）
+```bash
+curl -s "http://127.0.0.1:8080/api/v1/search?q=无菌检查&limit=2" \
+  -H "Authorization: Bearer my-secure-token"
+```
+**HTTP 响应：**
+```json
+{
+  "query": "无菌检查",
+  "count": 2,
+  "results": [ ... ]
+}
+```
+
+---
+
+### 方式 3：Model Context Protocol (MCP Server)
+Pharm-RAG 原生支持标准 MCP 协议，暴露 `search_regulations` 工具。
+
+#### 接入 Hermes Agent / Open-WebUI
+在 Hermes 的 `hermes_config.json` 中配置：
 ```json
 {
   "mcp_servers": {
     "pharm_rag": {
       "url": "http://127.0.0.1:8080/mcp",
-      "description": "Pharmaceutical Regulatory & GxP SOP Retrieval Engine"
+      "description": "Pharmaceutical Regulatory and GxP SOP Retrieval Engine"
     }
   }
 }
 ```
 
-### 2. 接入 Claude Desktop / Antigravity / Cursor
+#### 接入 Claude Desktop / Antigravity / Cursor
 在客户端的 `mcp_settings.json` 中配置：
-
 ```json
 {
   "mcpServers": {
     "pharm-rag": {
       "command": "/path/to/pharm-rag",
-      "args": ["serve", "--port", "8080"]
+      "args": ["serve", "--host", "127.0.0.1", "--port", "8080"]
     }
   }
 }
 ```
-配置完成后，AI Agent 在执行 CMC 方案审查、偏差调查或 GxP 合规性定性时，会自动调用 `search_regulations` 获取法条原文与条款编号。如果引述了草案，Agent 会收到明确的效力标识。
+
+---
+
+### 💡 推荐 Agent System Prompt 模板
+将以下提示词加入 Agent 的系统指令（System Prompt）中，可引导大模型精确引用条款溯源：
+
+```text
+你是一个精通医药 CMC 与 GMP/GxP 合规审评的专业专家助手。
+在回答医药法规、CMC 变更、分析方法验证或无菌保证相关问题时，请遵循以下原则：
+1. 严谨溯源：引述法条时必须指明完整出处面包屑（breadcrumb）及页码（page_num），不可泛泛而谈。
+2. 效力核查：检查检索结果中的 status 字段。若引用了「draft (征求意见稿)」，必须在回答中显式提示用户：“⚠️ 注意：该条款来自征求意见稿，仅反映最新审评趋势，正式 GMP 申报须以现行正式版本为准”。
+3. 冲突比对：若出现新旧指导原则并存，优先以现行版本为法定依据。
+```
 
 ---
 

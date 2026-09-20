@@ -1,7 +1,8 @@
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::Json,
+    extract::{Query, Request, State},
+    http::{header::AUTHORIZATION, StatusCode},
+    middleware::{self, Next},
+    response::{Json, Response},
     routing::{get, post},
     Router,
 };
@@ -12,6 +13,7 @@ use crate::storage::Database;
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -37,23 +39,60 @@ pub struct StatsApiResponse {
     pub version: &'static str,
 }
 
-pub async fn run_server(db: Database, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_server(
+    db: Database,
+    host: &str,
+    port: u16,
+    api_key: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         db: Arc::new(Mutex::new(db)),
+        api_key: api_key.clone(),
     };
 
     let app = Router::new()
         .route("/api/v1/search", get(search_handler))
         .route("/api/v1/stats", get(stats_handler))
         .route("/mcp", post(mcp_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
 
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("🚀 Pharm-RAG API & MCP Server listening on http://{}", addr);
+    if api_key.is_some() {
+        println!("🚀 Pharm-RAG API & MCP Server listening on http://{} (Bearer Auth Enabled)", addr);
+    } else {
+        println!("🚀 Pharm-RAG API & MCP Server listening on http://{}", addr);
+    }
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn auth_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if let Some(ref required_key) = state.api_key {
+        let auth_header = req.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok());
+        let is_valid = match auth_header {
+            Some(header) => {
+                if let Some(token) = header.strip_prefix("Bearer ") {
+                    token.trim() == required_key
+                } else {
+                    false
+                }
+            }
+            None => false,
+        };
+
+        if !is_valid {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    Ok(next.run(req).await)
 }
 
 async fn search_handler(
@@ -61,9 +100,16 @@ async fn search_handler(
     Query(params): Query<SearchParams>,
 ) -> Result<Json<SearchApiResponse>, StatusCode> {
     let limit = params.limit.unwrap_or(10);
-    let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let status_filter = params.status.as_deref();
-    let results = db.search(&params.q, limit, status_filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let q = params.q.clone();
+    let status_filter = params.status.clone();
+    let db_arc = state.db.clone();
+
+    let results = tokio::task::spawn_blocking(move || {
+        let db = db_arc.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db.search(&q, limit, status_filter.as_deref()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     Ok(Json(SearchApiResponse {
         query: params.q,
@@ -75,8 +121,13 @@ async fn search_handler(
 async fn stats_handler(
     State(state): State<AppState>,
 ) -> Result<Json<StatsApiResponse>, StatusCode> {
-    let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (docs, clauses, effective, draft) = db.get_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let db_arc = state.db.clone();
+    let (docs, clauses, effective, draft) = tokio::task::spawn_blocking(move || {
+        let db = db_arc.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db.get_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     Ok(Json(StatsApiResponse {
         total_documents: docs,
@@ -126,14 +177,20 @@ async fn mcp_handler(
             let query = params.get("arguments")
                 .and_then(|a| a.get("query"))
                 .and_then(|q| q.as_str())
-                .unwrap_or("");
+                .unwrap_or("")
+                .to_string();
             let limit = params.get("arguments")
                 .and_then(|a| a.get("limit"))
                 .and_then(|l| l.as_u64())
                 .unwrap_or(5) as usize;
 
-            let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            let results = db.search(query, limit, None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let db_arc = state.db.clone();
+            let results = tokio::task::spawn_blocking(move || {
+                let db = db_arc.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                db.search(&query, limit, None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            })
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
             let formatted: Vec<String> = results.into_iter().map(|r| {
                 let status_badge = match r.clause.status.as_str() {

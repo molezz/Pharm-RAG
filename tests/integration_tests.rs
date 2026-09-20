@@ -102,3 +102,31 @@ fn test_distinct_files_hash_saved_and_compute_file_hash() {
     assert!(matches!(res2, pharm_rag::storage::SaveOutcome::Saved { .. }));
 }
 
+#[test]
+fn test_like_wildcard_escaping() {
+    use pharm_rag::storage::escape_like;
+
+    assert_eq!(escape_like("normal text"), "normal text");
+    assert_eq!(escape_like("100% pure"), "100\\% pure");
+    assert_eq!(escape_like("sample_name"), "sample\\_name");
+    assert_eq!(escape_like("c:\\path"), "c:\\\\path");
+
+    let mut db = Database::open_in_memory().unwrap();
+    let parser = RegulatoryParser::new();
+    let clauses = parser.parse("法规", "纯度必须达到99.9%以上，且无残留_物质。");
+    db.save_document("指标", "/path/test.txt", "hash_like", "effective", &clauses).unwrap();
+
+    // Searching "%" directly should match literal "%" via LIKE fallback
+    let res_pct = db.search("%", 10, None).unwrap();
+    assert_eq!(res_pct.len(), 1);
+
+    // Searching "_" directly should match literal "_" via LIKE fallback
+    let res_underscore = db.search("_", 10, None).unwrap();
+    assert_eq!(res_underscore.len(), 1);
+
+    // Searching something not present with wildcard shouldn't match everything
+    let res_none = db.search("!%", 10, None).unwrap();
+    assert_eq!(res_none.len(), 0);
+}
+
+
