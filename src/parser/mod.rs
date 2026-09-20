@@ -4,7 +4,7 @@ pub mod docx;
 
 use std::fs;
 use std::path::Path;
-use ast::Clause;
+pub use ast::Clause;
 use regulatory::RegulatoryParser;
 
 pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Vec<Clause>, Box<dyn std::error::Error>> {

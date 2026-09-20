@@ -71,3 +71,34 @@ fn test_deduplication() {
     let outcome2 = db.save_document("法规A2026改名", "path/to/a_renamed.pdf", "sha256_identical", "effective", &clauses).unwrap();
     assert!(matches!(outcome2, pharm_rag::storage::SaveOutcome::DuplicateSkipped { .. }));
 }
+
+#[test]
+fn test_distinct_files_hash_saved_and_compute_file_hash() {
+    use std::io::Write;
+    use pharm_rag::storage::compute_file_hash;
+
+    let dir = std::env::temp_dir().join(format!("test_pharm_rag_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file1 = dir.join("doc1.txt");
+    let file2 = dir.join("doc2.txt");
+
+    std::fs::File::create(&file1).unwrap().write_all(b"regulation A content").unwrap();
+    std::fs::File::create(&file2).unwrap().write_all(b"regulation B completely different content").unwrap();
+
+    let hash1 = compute_file_hash(&file1);
+    let hash2 = compute_file_hash(&file2);
+
+    assert_ne!(hash1, hash2);
+
+    let mut db = Database::open_in_memory().unwrap();
+    let parser = RegulatoryParser::new();
+    let clauses = parser.parse("法规", "第一章 质量\n第一条 保证");
+
+    let res1 = db.save_document("法规A", file1.to_str().unwrap(), &hash1, "effective", &clauses).unwrap();
+    let res2 = db.save_document("法规B", file2.to_str().unwrap(), &hash2, "effective", &clauses).unwrap();
+
+    // Both distinct files must be successfully saved
+    assert!(matches!(res1, pharm_rag::storage::SaveOutcome::Saved { .. }));
+    assert!(matches!(res2, pharm_rag::storage::SaveOutcome::Saved { .. }));
+}
+

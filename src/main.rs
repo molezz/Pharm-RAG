@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::{Path, PathBuf};
 use pharm_rag::parser::parse_file;
-use pharm_rag::storage::Database;
+use pharm_rag::storage::{Database, compute_file_hash};
 
 #[derive(Parser)]
 #[command(name = "pharm-rag")]
@@ -186,25 +186,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn compute_file_hash(path: &Path) -> String {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-
-    if let Ok(mut file) = std::fs::File::open(path) {
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 8192];
-        while let Ok(n) = file.read(&mut buffer) {
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-        let result = hasher.finalize();
-        return result.iter().map(|b| format!("{:02x}", b)).collect();
-    }
-    "hash_fallback".to_string()
 }
 
 fn ingest_single_file(db: &mut Database, path: &Path, override_status: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {

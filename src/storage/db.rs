@@ -498,3 +498,24 @@ impl Database {
         Ok((doc_count, clause_count, effective_count, draft_count))
     }
 }
+
+/// Compute SHA-256 hash of a file for content-based deduplication
+pub fn compute_file_hash(path: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    if let Ok(mut file) = std::fs::File::open(path) {
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 8192];
+        while let Ok(n) = file.read(&mut buffer) {
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        let result = hasher.finalize();
+        return result.iter().map(|b| format!("{:02x}", b)).collect();
+    }
+    "hash_fallback".to_string()
+}
+
