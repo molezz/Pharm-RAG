@@ -1,0 +1,50 @@
+[package]
+name = "pharm-rag"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pharm-RAG Contributors"]
+description = "High-Fidelity Regulatory & SOP Retrieval Engine for Biopharma CMC QA"
+license = "Apache-2.0"
+repository = "https://github.com/your-username/Pharm-RAG"
+keywords = ["biopharma", "regulatory", "gmp", "rag", "sqlite"]
+categories = ["command-line-utilities", "database-implementations"]
+
+[dependencies]
+# SQLite with bundled engine (includes FTS5)
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Modern CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Async runtime & HTTP Server
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "signal", "io-util"] }
+axum = { version = "0.7", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Text processing & Regulatory Parsing
+regex = "1.10"
+
+# DOCX extraction (Word is zipped XML)
+zip = { version = "1.1", default-features = false, features = ["deflate"] }
+quick-xml = "0.36"
+
+# PDF extraction
+pdf-extract = "0.12"
+
+# Directory monitoring for auto-ingestion
+notify = "6.1"
+
+# Formatting & Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+colored = "2.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
