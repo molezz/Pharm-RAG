@@ -56,3 +56,18 @@ fn test_status_detection() {
     assert_eq!(RegulatoryParser::detect_status("细胞治疗药品药学变更研究技术指导原则（试行）", ""), "trial");
     assert_eq!(RegulatoryParser::detect_status("中国药典四部通则", ""), "effective");
 }
+
+#[test]
+fn test_deduplication() {
+    let mut db = Database::open_in_memory().expect("Failed to open memory db");
+    let parser = RegulatoryParser::new();
+    let clauses = parser.parse("法规A", "第一章 质量\n第一条 保证");
+
+    // First save: should succeed
+    let outcome1 = db.save_document("法规A", "path/to/a.pdf", "sha256_identical", "effective", &clauses).unwrap();
+    assert!(matches!(outcome1, pharm_rag::storage::SaveOutcome::Saved { .. }));
+
+    // Second save with different name and path, but identical hash: should be skipped!
+    let outcome2 = db.save_document("法规A2026改名", "path/to/a_renamed.pdf", "sha256_identical", "effective", &clauses).unwrap();
+    assert!(matches!(outcome2, pharm_rag::storage::SaveOutcome::DuplicateSkipped { .. }));
+}

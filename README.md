@@ -119,22 +119,37 @@ pharm-rag ingest ./SOP-QC-2026-无菌检查操作规程.docx
 pharm-rag ingest ./cgt_regulations/
 ```
 
-#### 🔍 精确检索法条
+#### 🧠 生成与更新本地语义向量（BGE-M3 / ONNX Runtime）
 ```bash
-# 常规精确检索（现行版自动优先排在前面，草案自动附加醒目标识与合规警示）
+# 自动下载并初始化多语言旗舰模型 BGE-M3，为库内法规条目生成密集向量
+pharm-rag embed
+
+# 可选：使用轻量版模型 BGE-Small-ZH（适合极低资源环境）
+pharm-rag embed --small
+
+# 可选：指定模型存放目录（默认自动保存在程序同级 ./models/ 目录）
+pharm-rag embed --model-dir ./my_models/
+```
+
+#### 🔍 高保真检索（支持 FTS5 Trigram 精确匹配与 BGE-M3 混合检索）
+```bash
+# 1. 默认极速精确检索（< 1ms，Trigram 完美匹配生物医药中英文术语）
 pharm-rag search "CAR-T 无菌检查"
 
-# 严格合规模式：仅检索现行正式版与试行版，彻底过滤征求意见稿
+# 2. 跨语言语义混合检索（RRF 倒数排名融合，用中文直接语义召回 FDA 英文指南！）
+pharm-rag search "AAV 宿主细胞DNA残留限度" --hybrid --limit 3
+
+# 3. 严格合规模式：仅检索现行正式版与试行版，彻底过滤征求意见稿
 pharm-rag search "RCL 检测" --only-effective
 
-# 指定仅检索征求意见稿，了解药监审评最新风向
+# 4. 指定仅检索征求意见稿，了解药监审评最新风向
 pharm-rag search "复制型病毒" --status draft
 
-# 指定返回最多 3 条，并输出格式化 JSON 供下游代码解析
+# 5. 指定返回最多 3 条，并输出格式化 JSON 供下游代码或 Agent 解析
 pharm-rag search "药学变更 控制" --limit 3 --json
 ```
 
-#### 📊 查看法规库统计（含效力状态分类）
+#### 📊 查看法规库统计（含效力状态与向量覆盖率）
 ```bash
 pharm-rag stats
 ```
@@ -147,6 +162,7 @@ pharm-rag stats
     ├─ 现行/试行版: 6
     └─ 征求意见稿: 2
   已切分法规条款: 303
+  语义向量覆盖率: 303 / 303 (100.0%)
 ─────────────────────────────
 ```
 
@@ -160,7 +176,7 @@ pharm-rag watch ./incoming_regulations/
 ```bash
 pharm-rag serve --port 8080
 ```
-- **REST 检索接口**：`GET http://localhost:8080/api/v1/search?q=慢病毒滴度`
+- **REST 检索接口**：`GET http://localhost:8080/api/v1/search?q=慢病毒滴度&hybrid=true`
 - **状态统计接口**：`GET http://localhost:8080/api/v1/stats`
 - **MCP 服务端点**：`POST http://localhost:8080/mcp`（供 AI Agent 调用 `search_regulations` 工具）
 
@@ -168,7 +184,22 @@ pharm-rag serve --port 8080
 
 ## 🤖 接入 AI Agent（MCP 配置示例）
 
-在你的 Agent 客户端（例如 Claude Desktop、Hermes 或 Antigravity）的 MCP 配置文件中添加：
+### 1. 接入 Hermes Agent / Open-WebUI
+在 Hermes 的 MCP 工具配置（或 `hermes_config.json`）中添加本地服务端点：
+
+```json
+{
+  "mcp_servers": {
+    "pharm_rag": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "description": "Biopharma regulatory CMC QA retrieval engine"
+    }
+  }
+}
+```
+
+### 2. 接入 Claude Desktop / Antigravity / Cursor
+在客户端的 `mcp_settings.json` 中配置：
 
 ```json
 {
@@ -195,9 +226,9 @@ pharm-rag serve --port 8080
 - [x] 文件夹增量自动监控 (`notify`)
 - [x] 本地 HTTP REST API 与 Model Context Protocol (MCP) Server
 - [x] GitHub Actions 多平台自动化矩阵编译构建与 Release 发布
+- [x] 本地 ONNX 嵌入轻量 Hybrid 语义重排支持（BGE-M3 + RRF 融合）
+- [x] FDA / EMA 英文指南专有词根与中英双语检索支持
 - [ ] 复杂质控表格（Table-aware）Markdown 高保真对齐重构
-- [ ] FDA / EMA 英文指南专有词根与中英双语检索支持
-- [ ] 本地 ONNX 嵌入轻量 Hybrid 语义重排支持
 
 ---
 

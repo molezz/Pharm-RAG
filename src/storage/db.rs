@@ -2,6 +2,12 @@ use rusqlite::{params, Connection, Result};
 use std::path::Path;
 use crate::parser::ast::{Clause, SearchResult};
 
+#[derive(Debug, Clone)]
+pub enum SaveOutcome {
+    Saved { doc_id: i64, clause_count: usize },
+    DuplicateSkipped { existing_title: String, existing_path: String },
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -62,6 +68,16 @@ impl Database {
             [],
         )?;
 
+        // Clause embeddings table for dense semantic vector search
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS clause_embeddings (
+                clause_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                FOREIGN KEY(clause_id) REFERENCES clauses(id) ON DELETE CASCADE
+            );",
+            [],
+        )?;
+
         // Migrate older databases if status column is missing
         let _ = self.conn.execute("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'effective'", []);
         let _ = self.conn.execute("ALTER TABLE clauses ADD COLUMN status TEXT DEFAULT 'effective'", []);
@@ -101,10 +117,27 @@ impl Database {
     }
 
     /// Insert or update a document and its clauses
-    pub fn save_document(&mut self, title: &str, path: &str, hash: &str, status: &str, clauses: &[Clause]) -> Result<i64> {
+    /// If an identical content hash already exists under a different path, skip and return DuplicateSkipped.
+    pub fn save_document(&mut self, title: &str, path: &str, hash: &str, status: &str, clauses: &[Clause]) -> Result<SaveOutcome> {
+        // Check if an identical file hash already exists under another path/filename
+        if !hash.is_empty() && hash != "hash_placeholder" {
+            let mut check_stmt = self.conn.prepare(
+                "SELECT id, title, path FROM documents WHERE hash = ? AND path != ?"
+            )?;
+            let mut dup_rows = check_stmt.query(params![hash, path])?;
+            if let Some(row) = dup_rows.next()? {
+                let existing_title: String = row.get(1)?;
+                let existing_path: String = row.get(2)?;
+                return Ok(SaveOutcome::DuplicateSkipped {
+                    existing_title,
+                    existing_path,
+                });
+            }
+        }
+
         let tx = self.conn.transaction()?;
 
-        // Delete existing doc if present
+        // Delete existing doc if re-ingesting same path
         tx.execute("DELETE FROM documents WHERE path = ?", params![path])?;
 
         tx.execute(
@@ -135,7 +168,7 @@ impl Database {
         }
 
         tx.commit()?;
-        Ok(doc_id)
+        Ok(SaveOutcome::Saved { doc_id, clause_count: clauses.len() })
     }
 
     /// Search clauses with Trigram FTS5 + Fallback for short keywords (<3 chars)
@@ -265,6 +298,193 @@ impl Database {
                 });
             }
         }
+
+        Ok(results)
+    }
+
+    /// Save dense vector embedding for a specific clause
+    pub fn save_clause_embedding(&self, clause_id: i64, embedding: &[f32]) -> Result<()> {
+        let bytes = crate::storage::semantic::vector_to_bytes(embedding);
+        self.conn.execute(
+            "INSERT OR REPLACE INTO clause_embeddings (clause_id, embedding) VALUES (?, ?)",
+            params![clause_id, bytes],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve clauses that do not yet have vector embeddings
+    pub fn get_unembedded_clauses(&self) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.breadcrumb || '\n' || c.content
+             FROM clauses c
+             LEFT JOIN clause_embeddings e ON c.id = e.clause_id
+             WHERE e.clause_id IS NULL"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+
+        let mut res = Vec::new();
+        for item in rows.flatten() {
+            res.push(item);
+        }
+        Ok(res)
+    }
+
+    /// Count how many clauses have embeddings
+    pub fn get_embedding_stats(&self) -> Result<(usize, usize)> {
+        let total_clauses: usize = self.conn.query_row("SELECT COUNT(*) FROM clauses", [], |r| r.get(0))?;
+        let embedded_clauses: usize = self.conn.query_row("SELECT COUNT(*) FROM clause_embeddings", [], |r| r.get(0))?;
+        Ok((embedded_clauses, total_clauses))
+    }
+
+    /// Dense semantic vector search using cosine similarity
+    pub fn search_vector(&self, query_vector: &[f32], limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
+        let sql = match status_filter {
+            Some(_) => {
+                "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
+                        c.breadcrumb, c.page_num, c.content, c.table_data, c.status, e.embedding
+                 FROM clause_embeddings e
+                 JOIN clauses c ON c.id = e.clause_id
+                 WHERE c.status = ?"
+            }
+            None => {
+                "SELECT c.id, c.doc_id, c.doc_title, c.chapter, c.section, c.article,
+                        c.breadcrumb, c.page_num, c.content, c.table_data, c.status, e.embedding
+                 FROM clause_embeddings e
+                 JOIN clauses c ON c.id = e.clause_id"
+            }
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let map_fn = |row: &rusqlite::Row| {
+            let embedding_bytes: Vec<u8> = row.get(11)?;
+            let emb = crate::storage::semantic::bytes_to_vector(&embedding_bytes);
+            let sim = crate::storage::semantic::cosine_similarity(query_vector, &emb);
+
+            Ok((
+                Clause {
+                    id: row.get(0)?,
+                    doc_id: row.get(1)?,
+                    doc_title: row.get(2)?,
+                    chapter: row.get(3)?,
+                    section: row.get(4)?,
+                    article: row.get(5)?,
+                    breadcrumb: row.get(6)?,
+                    page_num: row.get(7)?,
+                    content: row.get(8)?,
+                    table_data: row.get(9)?,
+                    status: row.get(10)?,
+                },
+                sim as f64,
+            ))
+        };
+
+        let mut scored_clauses = Vec::new();
+        if let Some(sf) = status_filter {
+            let rows = stmt.query_map(params![sf], map_fn)?;
+            for item in rows.flatten() {
+                scored_clauses.push(item);
+            }
+        } else {
+            let rows = stmt.query_map([], map_fn)?;
+            for item in rows.flatten() {
+                scored_clauses.push(item);
+            }
+        }
+
+        // Sort by status priority first, then cosine similarity descending
+        scored_clauses.sort_by(|a, b| {
+            let status_rank = |s: &str| match s {
+                "effective" => 1,
+                "trial" => 2,
+                "draft" => 3,
+                _ => 4,
+            };
+            let rank_a = status_rank(&a.0.status);
+            let rank_b = status_rank(&b.0.status);
+            if rank_a != rank_b {
+                rank_a.cmp(&rank_b)
+            } else {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+
+        scored_clauses.truncate(limit);
+
+        let results = scored_clauses.into_iter().map(|(clause, sim)| SearchResult {
+            clause,
+            score: sim,
+            match_strategy: "BGE_M3_Semantic".to_string(),
+        }).collect();
+
+        Ok(results)
+    }
+
+    /// Hybrid Search: Combining SQLite FTS5 (Trigram) and BGE-M3 (Dense Vector) with Reciprocal Rank Fusion (RRF)
+    pub fn search_hybrid(&self, query: &str, query_vector: &[f32], limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
+        let candidate_limit = (limit * 3).max(20);
+        let fts_results = self.search(query, candidate_limit, status_filter)?;
+        let vec_results = self.search_vector(query_vector, candidate_limit, status_filter)?;
+
+        // RRF Constant k = 60
+        const K: f64 = 60.0;
+        let mut rrf_scores: std::collections::HashMap<i64, (Clause, f64, bool, bool)> = std::collections::HashMap::new();
+
+        for (rank, item) in fts_results.iter().enumerate() {
+            if let Some(id) = item.clause.id {
+                let rrf = 1.0 / (K + rank as f64 + 1.0);
+                rrf_scores.insert(id, (item.clause.clone(), rrf, true, false));
+            }
+        }
+
+        for (rank, item) in vec_results.iter().enumerate() {
+            if let Some(id) = item.clause.id {
+                let rrf = 1.0 / (K + rank as f64 + 1.0);
+                if let Some(entry) = rrf_scores.get_mut(&id) {
+                    entry.1 += rrf;
+                    entry.3 = true; // Both FTS and Vector matched!
+                } else {
+                    rrf_scores.insert(id, (item.clause.clone(), rrf, false, true));
+                }
+            }
+        }
+
+        let mut combined: Vec<(Clause, f64, String)> = rrf_scores.into_values().map(|(clause, score, in_fts, in_vec)| {
+            let strategy = if in_fts && in_vec {
+                "Hybrid_RRF (FTS5 + BGE-M3)".to_string()
+            } else if in_fts {
+                "FTS5_Trigram".to_string()
+            } else {
+                "BGE_M3_Semantic".to_string()
+            };
+            (clause, score, strategy)
+        }).collect();
+
+        combined.sort_by(|a, b| {
+            let status_rank = |s: &str| match s {
+                "effective" => 1,
+                "trial" => 2,
+                "draft" => 3,
+                _ => 4,
+            };
+            let rank_a = status_rank(&a.0.status);
+            let rank_b = status_rank(&b.0.status);
+            if rank_a != rank_b {
+                rank_a.cmp(&rank_b)
+            } else {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+
+        combined.truncate(limit);
+
+        let results = combined.into_iter().map(|(clause, score, strategy)| SearchResult {
+            clause,
+            score,
+            match_strategy: strategy,
+        }).collect();
 
         Ok(results)
     }
