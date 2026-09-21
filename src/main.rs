@@ -272,49 +272,64 @@ fn ingest_single_file(db: &mut Database, path: &Path, override_status: Option<&s
     Ok(())
 }
 
+fn collect_supported_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                collect_supported_files(&path, files)?;
+            } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if ["pdf", "docx", "md", "txt"].contains(&ext_lower.as_str()) {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn ingest_dir(db: &mut Database, dir: &Path, override_status: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let entries = std::fs::read_dir(dir)?;
+    let mut files = Vec::new();
+    collect_supported_files(dir, &mut files)?;
+    files.sort();
+
     let mut total_files = 0;
     let mut total_clauses = 0;
     let mut skipped_duplicates = 0;
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            let ext_lower = ext.to_lowercase();
-            if ["pdf", "docx", "md", "txt"].contains(&ext_lower.as_str()) {
-                let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("文档");
-                if let Ok(mut clauses) = parse_file(&path) {
-                    let p_str = path.to_string_lossy();
-                    let hash = match compute_file_hash(&path) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            eprintln!("  ⚠️ 读取文件失败跳过 {}: {}", path.display(), e);
-                            continue;
-                        }
-                    };
-                    let status = if let Some(s) = override_status {
-                        for c in &mut clauses {
-                            c.status = s.to_string();
-                        }
-                        s
-                    } else {
-                        clauses.first().map(|c| c.status.as_str()).unwrap_or("effective")
-                    };
-
-                    match db.save_document(title, &p_str, &hash, status, &clauses) {
-                        Ok(pharmrag::storage::SaveOutcome::Saved { clause_count, .. }) => {
-                            total_files += 1;
-                            total_clauses += clause_count;
-                            println!("  ✓ 已索引: {} [{}] ({} 条目)", title, status.yellow(), clause_count);
-                        }
-                        Ok(pharmrag::storage::SaveOutcome::DuplicateSkipped { existing_title, .. }) => {
-                            skipped_duplicates += 1;
-                            println!("  ⏭️  已去重跳过: {} (与《{}》内容完全一致)", title.yellow(), existing_title.cyan());
-                        }
-                        Err(e) => eprintln!("  ❌ 录入失败 {}: {}", title, e),
-                    }
+    for path in files {
+        let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("文档");
+        if let Ok(mut clauses) = parse_file(&path) {
+            let p_str = path.to_string_lossy();
+            let hash = match compute_file_hash(&path) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("  ⚠️ 读取文件失败跳过 {}: {}", path.display(), e);
+                    continue;
                 }
+            };
+            let status = if let Some(s) = override_status {
+                for c in &mut clauses {
+                    c.status = s.to_string();
+                }
+                s
+            } else {
+                clauses.first().map(|c| c.status.as_str()).unwrap_or("effective")
+            };
+
+            match db.save_document(title, &p_str, &hash, status, &clauses) {
+                Ok(pharmrag::storage::SaveOutcome::Saved { clause_count, .. }) => {
+                    total_files += 1;
+                    total_clauses += clause_count;
+                    println!("  ✓ 已索引: {} [{}] ({} 条目)", title, status.yellow(), clause_count);
+                }
+                Ok(pharmrag::storage::SaveOutcome::DuplicateSkipped { existing_title, .. }) => {
+                    skipped_duplicates += 1;
+                    println!("  ⏭️  已去重跳过: {} (与《{}》内容完全一致)", title.yellow(), existing_title.cyan());
+                }
+                Err(e) => eprintln!("  ❌ 录入失败 {}: {}", title, e),
             }
         }
     }
