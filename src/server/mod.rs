@@ -69,6 +69,18 @@ pub async fn run_server(
     Ok(())
 }
 
+/// Constant-time byte slice comparison to mitigate timing side-channel attacks
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 async fn auth_middleware(
     State(state): State<AppState>,
     req: Request,
@@ -79,7 +91,7 @@ async fn auth_middleware(
         let is_valid = match auth_header {
             Some(header) => {
                 if let Some(token) = header.strip_prefix("Bearer ") {
-                    token.trim() == required_key
+                    constant_time_eq(token.trim().as_bytes(), required_key.as_bytes())
                 } else {
                     false
                 }

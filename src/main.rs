@@ -200,6 +200,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let api_key = api_key
                 .or_else(|| std::env::var("PHARMRAG_API_KEY").ok())
                 .or_else(|| std::env::var("PHARM_RAG_API_KEY").ok());
+
+            let is_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+            if !is_loopback && api_key.is_none() {
+                eprintln!("❌ 安全错误: 服务试图监听非回环地址 ({})，但未配置 API Key！", host);
+                eprintln!("   为防止数据未授权暴露，外部访问时必须通过 `--api-key <KEY>` 或环境变量 `PHARMRAG_API_KEY` 设置鉴权密钥。");
+                std::process::exit(1);
+            }
+
             let db = Database::open(&db_path)?;
             pharmrag::server::run_server(db, &host, port, api_key).await?;
         }
@@ -229,7 +237,7 @@ fn ingest_single_file(db: &mut Database, path: &Path, override_status: Option<&s
     println!("⏳ Parsing {}...", path.display());
     let mut clauses = parse_file(path)?;
     let p_str = path.to_string_lossy();
-    let hash = compute_file_hash(path);
+    let hash = compute_file_hash(path)?;
     
     let status = if let Some(s) = override_status {
         for c in &mut clauses {
@@ -270,7 +278,13 @@ fn ingest_dir(db: &mut Database, dir: &Path, override_status: Option<&str>) -> R
                 let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("文档");
                 if let Ok(mut clauses) = parse_file(&path) {
                     let p_str = path.to_string_lossy();
-                    let hash = compute_file_hash(&path);
+                    let hash = match compute_file_hash(&path) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            eprintln!("  ⚠️ 读取文件失败跳过 {}: {}", path.display(), e);
+                            continue;
+                        }
+                    };
                     let status = if let Some(s) = override_status {
                         for c in &mut clauses {
                             c.status = s.to_string();

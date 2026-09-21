@@ -36,12 +36,12 @@ impl RegulatoryParser {
             // 过滤页眉页脚噪点
             re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|\d+\s*/\s*\d+|April 25, 2023|June 8, 2023)$").unwrap(),
 
-            // 目录过滤特征：点导线（连续点/省略号/下划线）
-            re_toc_dots: Regex::new(r"(\.{3,}|…{2,}|(?:\.\s*){3,}|·{3,}|_{4,})").unwrap(),
-            // 点导线或点结尾接页码（如 "...... 12" 或 "... 4"）
-            re_toc_dots_page: Regex::new(r"(\.{2,}|…|(?:\.\s*){2,}|·{2,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
-            // 目录条目特征：标题紧接页码
-            re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\s{2,}|\?|\.\s*)(\d+|[ivxldcm]+)\s*$").unwrap(),
+            // 目录过滤特征：真正的点导线（连续4个及以上的点/下划线/中间点，或4个以上的省略号字符）
+            re_toc_dots: Regex::new(r"(\.{4,}|…{4,}|(?:\.\s*){4,}|·{4,}|_{4,})").unwrap(),
+            // 点导线结尾接页码（至少3个导线点紧跟页码，排除小数如 0.5）
+            re_toc_dots_page: Regex::new(r"(\.{3,}|…{3,}|(?:\.\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
+            // 目录条目特征：标题紧接点导线与页码（必须包含真正的导线点，裸尾部数字不算证据）
+            re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\.{3,}|…{3,}|(?:\.\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
             // 目录标题标记
             re_toc_title: Regex::new(r"(?i)^(-{3,}\s*)?(目\s*录|table of contents|contents)\s*(-{3,})?$").unwrap(),
         }
@@ -72,7 +72,7 @@ impl RegulatoryParser {
 
     /// Clean trailing dot leaders and page numbers from heading titles
     pub fn clean_heading(text: &str) -> String {
-        let re_trailing = Regex::new(r"[\s\.·…_]{2,}\s*(\d+|[ivxldcm]+)?\s*$").unwrap();
+        let re_trailing = Regex::new(r"([\.·…_]{2,}|(?:\.\s*){2,})\s*(\d+|[ivxldcm]+)?\s*$").unwrap();
         re_trailing.replace(text.trim(), "").trim().to_string()
     }
 
@@ -112,11 +112,10 @@ impl RegulatoryParser {
                             page: Option<i32>| {
             let content = lines.join("\n").trim().to_string();
             if !content.is_empty() {
-                // Secondary safeguard: Discard if content is a TOC entry or empty header duplicate
-                let is_toc_content = self.is_toc(&content)
-                    || (lines.len() <= 2 && content.chars().count() < 120 && (content == article || content == chapter));
+                // Secondary safeguard: Discard if it is an empty header duplicate with no body content
+                let is_empty_header_dup = lines.len() <= 2 && content.chars().count() < 120 && (content == article || content == chapter);
 
-                if !is_toc_content {
+                if !is_empty_header_dup {
                     let mut parts = vec![doc_title.to_string()];
                     if !chapter.is_empty() {
                         parts.push(chapter.to_string());
@@ -142,6 +141,8 @@ impl RegulatoryParser {
                         table_data: None,
                         status: status.clone(),
                     });
+                } else {
+                    tracing::debug!("Document '{}': discarding empty header duplicate: {}", doc_title, content);
                 }
             }
             lines.clear();
@@ -169,12 +170,14 @@ impl RegulatoryParser {
                 current_section.clear();
                 current_article.clear();
                 in_toc = true;
+                tracing::info!("Document '{}': entering Table of Contents block", doc_title);
                 continue;
             }
 
             // If inside TOC block, determine if document body has started
             if in_toc {
                 if self.is_toc(trimmed) {
+                    tracing::debug!("Document '{}': filtered TOC line: {}", doc_title, trimmed);
                     continue;
                 }
 
@@ -184,15 +187,12 @@ impl RegulatoryParser {
 
                 if is_substantive || is_clean_chapter {
                     in_toc = false;
+                    tracing::info!("Document '{}': TOC block ended, document body started at: {}", doc_title, trimmed);
                 } else {
-                    // Still part of TOC preamble
+                    // Still part of TOC preamble/title lines inside TOC
+                    tracing::debug!("Document '{}': skipped TOC preamble line: {}", doc_title, trimmed);
                     continue;
                 }
-            }
-
-            // Standalone TOC line filter (works even if document lacked TOC title header)
-            if self.is_toc(trimmed) {
-                continue;
             }
 
             // Check for page marker
@@ -257,7 +257,7 @@ impl RegulatoryParser {
         if clauses.is_empty() && !raw_text.trim().is_empty() {
             for (idx, para) in raw_text.split("\n\n").enumerate() {
                 let trimmed = para.trim();
-                if !trimmed.is_empty() && !self.is_toc(trimmed) {
+                if !trimmed.is_empty() {
                     clauses.push(Clause {
                         id: None,
                         doc_id: None,

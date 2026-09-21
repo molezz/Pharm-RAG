@@ -85,8 +85,8 @@ fn test_distinct_files_hash_saved_and_compute_file_hash() {
     std::fs::File::create(&file1).unwrap().write_all(b"regulation A content").unwrap();
     std::fs::File::create(&file2).unwrap().write_all(b"regulation B completely different content").unwrap();
 
-    let hash1 = compute_file_hash(&file1);
-    let hash2 = compute_file_hash(&file2);
+    let hash1 = compute_file_hash(&file1).unwrap();
+    let hash2 = compute_file_hash(&file2).unwrap();
 
     assert_ne!(hash1, hash2);
 
@@ -191,6 +191,40 @@ Commercial INDs must be submitted consistent with the eCTD requirements.
     assert_eq!(en_clauses[1].section, "A.  IND Submission and Quality");
     assert_eq!(en_clauses[1].article, "Q1.  What should sponsors know about electronic submission of an Investigational New Drug application?");
     assert!(!en_clauses[1].breadcrumb.contains("..."), "Breadcrumb must not contain dot leaders");
+}
+
+#[test]
+fn test_tail_clause_ending_with_number_and_ellipsis_preserved() {
+    let parser = RegulatoryParser::new();
+
+    // Document where the final clause ends with numbers (e.g. 0.5, 0.25, 6.5)
+    // and clauses contain Chinese ellipsis ……
+    let text = r#"
+第一章 质量要求
+第一条 蛋白质纯度
+终产品中宿主蛋白质残留量应低于 0.5
+
+第二条 溶剂残留
+有机溶剂残留检测应符合规定，如乙醇残留量应控制在 0.25
+
+第三条 综合质控指标
+结合生产工艺参数优化情况……终产品的微粒数应小于 6000 粒，且pH值应维持在 6.5
+"#;
+
+    let clauses = parser.parse("质量控制标准", text);
+    assert_eq!(clauses.len(), 3, "All 3 clauses must be preserved, none dropped by false-positive TOC filters");
+    assert!(clauses[0].content.ends_with("0.5"));
+    assert!(clauses[1].content.ends_with("0.25"));
+    assert!(clauses[2].content.contains("……"));
+    assert!(clauses[2].content.ends_with("6.5"));
+}
+
+#[test]
+fn test_compute_file_hash_error_on_missing_file() {
+    use pharmrag::storage::compute_file_hash;
+    let nonexistent = std::path::Path::new("/path/to/definitely/nonexistent_file_12345.xyz");
+    let res = compute_file_hash(nonexistent);
+    assert!(res.is_err(), "compute_file_hash must return Err for nonexistent file instead of a constant fallback string");
 }
 
 

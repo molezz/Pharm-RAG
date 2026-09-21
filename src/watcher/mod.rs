@@ -29,7 +29,13 @@ pub fn watch_directory<P: AsRef<Path>>(dir_path: P, db_path: PathBuf) -> Result<
                                 Ok(clauses) => {
                                     let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("法规");
                                     let p_str = path.to_string_lossy();
-                                    let hash = compute_file_hash(&path);
+                                    let hash = match compute_file_hash(&path) {
+                                        Ok(h) => h,
+                                        Err(e) => {
+                                            eprintln!("❌ 无法读取文件计算哈希，跳过 {:?}: {}", path, e);
+                                            continue;
+                                        }
+                                    };
                                     let status = clauses.first().map(|c| c.status.as_str()).unwrap_or("effective");
                                     match db.save_document(title, &p_str, &hash, status, &clauses) {
                                         Ok(SaveOutcome::Saved { clause_count, .. }) => {

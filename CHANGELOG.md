@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.3] - 2026-09-21
+
+### Fixed
+- **P0: 修复 TOC 过滤导致尾条以数字结尾或含中文省略号条款被误删的缺陷**：
+  - 严格限制 TOC 过滤仅在 `in_toc == true` 目录块内生效，移除正文区域的 standalone is_toc 过滤；
+  - 修复 `re_toc_dots` 对中文省略号 `……` 的误判，要求至少 4 组点导线；
+  - 修复 `re_toc_entry` 对纯尾部数字（如 `0.5`、`0.25`、`pH 6.5`）的误判，强制要求真实点导线；
+  - `flush_clause` 移除 `is_toc` 对合法条款的误杀，增加结构化日志记录。
+- **P3: 修复 `compute_file_hash` 失败时回退常量导致不可读文件被误判为重复的缺陷**：
+  - 将 `compute_file_hash` 签名改为返回 `std::io::Result<String>`，遇到不可读或不存在文件时直接抛出错误并跳过，杜绝固定字符串哈希碰撞。
+
+### Security
+- **P1: `serve --host 0.0.0.0` 外网监听强制 API Key 守卫**：当监听非回环地址（如 `0.0.0.0`）且未设置 API Key 时，直接拒绝启动并安全报错退出，杜绝未鉴权接口暴露。
+- **P2: Bearer Token 常量时间比较防范计时侧信道**：实现 XOR 折叠常量时间字节比较（`constant_time_eq`），防止短路字符串比较泄露密钥长度与前缀信息。
+
+### Changed & Performance
+- **P3: 规范向量检索复杂度说明与 ANN 索引演进路线**：明确 `search_vector` 当前在内存中执行 O(N) 全局余弦相似度精准排序，保证 100% 召回率，并规划未来数据规模超 10 万条款时平滑迁移至 `sqlite-vec` / `usearch`。
+
+---
+
 ## [v0.2.2] - 2026-09-20
 
 ### Fixed
