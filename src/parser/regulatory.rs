@@ -33,15 +33,15 @@ impl RegulatoryParser {
             // 英文：Q1., Q2., Question 1., 1. Testing, 2. Stability
             re_article: Regex::new(r"(?i)^(第[一二三四五六七八九十百]+条|\d+[\.、]|Q\d+[\.:\s]|Question\s*\d+[\.:\s])\s*(.*)$").unwrap(),
 
-            // 过滤页眉页脚噪点
-            re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|\d+\s*/\s*\d+|April 25, 2023|June 8, 2023)$").unwrap(),
+            // 过滤页眉页脚固定文本噪点（注意：页码如 1 / 49 交由 re_page 处理，不在此丢弃）
+            re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|April 25, 2023|June 8, 2023)$").unwrap(),
 
-            // 目录过滤特征：真正的点导线（连续4个及以上的点/下划线/中间点，或4个以上的省略号字符）
-            re_toc_dots: Regex::new(r"(\.{4,}|…{4,}|(?:\.\s*){4,}|·{4,}|_{4,})").unwrap(),
+            // 目录过滤特征：真正的点导线（连续4个及以上的半角点、全角点 U+FF0E、下划线、中间点，或3个以上的省略号字符）
+            re_toc_dots: Regex::new(r"(\.{4,}|．{4,}|…{3,}|(?:\.\s*){4,}|(?:．\s*){4,}|·{4,}|_{4,})").unwrap(),
             // 点导线结尾接页码（至少3个导线点紧跟页码，排除小数如 0.5）
-            re_toc_dots_page: Regex::new(r"(\.{3,}|…{3,}|(?:\.\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
+            re_toc_dots_page: Regex::new(r"(\.{3,}|．{3,}|…{2,}|(?:\.\s*){3,}|(?:．\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
             // 目录条目特征：标题紧接点导线与页码（必须包含真正的导线点，裸尾部数字不算证据）
-            re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\.{3,}|…{3,}|(?:\.\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
+            re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\.{3,}|．{3,}|…{2,}|(?:\.\s*){3,}|(?:．\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
             // 目录标题标记
             re_toc_title: Regex::new(r"(?i)^(-{3,}\s*)?(目\s*录|table of contents|contents)\s*(-{3,})?$").unwrap(),
         }
@@ -100,9 +100,10 @@ impl RegulatoryParser {
         let mut current_article = String::new();
         let mut current_lines = Vec::new();
         let mut current_page: Option<i32> = None;
+        let mut clause_page: Option<i32> = None;
         let mut in_toc = false;
 
-        let re_page = Regex::new(r"(?i)\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|第\s*(\d+)\s*页(?:\s*[/共]|\s*$)|(?:^|\b)Page\s+(\d+)\b|(?m)^\s*(\d{1,4})\s*$").unwrap();
+        let re_page = Regex::new(r"(?i)\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|第\s*(\d+)\s*页(?:\s*[/共]|\s*$)|(?:^|\b)Page\s+(\d+)\b|^\s*(\d{1,4})\s*/\s*\d+\s*$|(?m)^\s*(\d{1,4})\s*$").unwrap();
 
         let flush_clause = |clauses: &mut Vec<Clause>,
                             chapter: &str,
@@ -159,6 +160,22 @@ impl RegulatoryParser {
                 continue;
             }
 
+            // Check for page marker (must be checked before TOC checks so page numbers update accurately)
+            if let Some(caps) = re_page.captures(trimmed) {
+                let page_match = caps.get(1)
+                    .or_else(|| caps.get(2))
+                    .or_else(|| caps.get(3))
+                    .or_else(|| caps.get(4))
+                    .or_else(|| caps.get(5))
+                    .or_else(|| caps.get(6));
+                if let Some(p) = page_match {
+                    if let Ok(num) = p.as_str().parse::<i32>() {
+                        current_page = Some(num);
+                        continue;
+                    }
+                }
+            }
+
             // Check if this line starts a Table of Contents block
             if self.re_toc_title.is_match(trimmed) {
                 if current_chapter.is_empty() && current_article.is_empty() {
@@ -181,11 +198,11 @@ impl RegulatoryParser {
                     continue;
                 }
 
-                // Check for start of substantive document body or clean chapter heading
-                let is_substantive = trimmed.len() > 60 && !trimmed.ends_with("...") && (trimmed.ends_with('.') || trimmed.ends_with('。') || trimmed.ends_with(';') || trimmed.ends_with('；'));
-                let is_clean_chapter = self.re_chapter.is_match(trimmed) && !self.is_toc(trimmed);
+                // Check for start of substantive document body or clean chapter/section heading without dots
+                let is_clean_chapter = (self.re_chapter.is_match(trimmed) || self.re_section.is_match(trimmed)) && !self.re_toc_dots.is_match(trimmed) && !self.re_toc_dots_page.is_match(trimmed);
+                let is_substantive = (trimmed.len() > 30 && !trimmed.ends_with("...") && (trimmed.ends_with('.') || trimmed.ends_with('。') || trimmed.ends_with(';') || trimmed.ends_with('；'))) || is_clean_chapter;
 
-                if is_substantive || is_clean_chapter {
+                if is_substantive {
                     in_toc = false;
                     tracing::info!("Document '{}': TOC block ended, document body started at: {}", doc_title, trimmed);
                 } else {
@@ -195,63 +212,55 @@ impl RegulatoryParser {
                 }
             }
 
-            // Check for page marker
-            if let Some(caps) = re_page.captures(trimmed) {
-                let page_match = caps.get(1)
-                    .or_else(|| caps.get(2))
-                    .or_else(|| caps.get(3))
-                    .or_else(|| caps.get(4))
-                    .or_else(|| caps.get(5));
-                if let Some(p) = page_match {
-                    if let Ok(num) = p.as_str().parse::<i32>() {
-                        current_page = Some(num);
-                        continue;
-                    }
-                }
-            }
-
             // Check Chapter
             if let Some(caps) = self.re_chapter.captures(trimmed) {
-                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, clause_page.or(current_page));
                 let raw_ch = caps.get(0).map_or("", |m| m.as_str());
                 current_chapter = Self::clean_heading(raw_ch);
                 current_section.clear();
                 current_article.clear();
+                clause_page = current_page;
                 continue;
             }
 
             // Check Section
             if let Some(caps) = self.re_section.captures(trimmed) {
-                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, clause_page.or(current_page));
                 let raw_sec = caps.get(0).map_or("", |m| m.as_str());
                 current_section = Self::clean_heading(raw_sec);
                 current_article.clear();
+                clause_page = current_page;
                 continue;
             }
 
             // Check Article / FAQ Question
             if let Some(caps) = self.re_article.captures(trimmed) {
-                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, clause_page.or(current_page));
                 let raw_art = caps.get(0).map_or("", |m| m.as_str());
                 current_article = Self::clean_heading(raw_art);
                 current_lines.push(current_article.clone());
+                clause_page = current_page;
                 continue;
             }
 
             // Town hall / transcript special: Italicized or bold questions ending with ?
             if trimmed.ends_with('?') && (trimmed.starts_with("What") || trimmed.starts_with("How") || trimmed.starts_with("Can") || trimmed.starts_with("Is") || trimmed.starts_with("Could")) {
-                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, clause_page.or(current_page));
                 current_article = Self::clean_heading(trimmed);
                 current_lines.push(current_article.clone());
+                clause_page = current_page;
                 continue;
             }
 
             // Regular body text
+            if clause_page.is_none() {
+                clause_page = current_page;
+            }
             current_lines.push(trimmed.to_string());
         }
 
         // Flush any remaining text
-        flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+        flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, clause_page.or(current_page));
 
         // Fallback: If document didn't match standard headings, split by paragraphs
         if clauses.is_empty() && !raw_text.trim().is_empty() {

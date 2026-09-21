@@ -268,6 +268,33 @@ fn test_search_result_scores_and_hybrid_threshold() {
     assert!(hybrid_irrelevant.is_empty(), "Irrelevant queries with 0 FTS matches and low similarity must be filtered out");
 }
 
+#[test]
+fn test_fullwidth_toc_and_page_fraction_format() {
+    let parser = RegulatoryParser::new();
+    let sample = r#"
+目录
+一、概述 ．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．．． 1
+二、技术要求 …………………………………………… 2
+
+1 / 49
+一、概述
+随着生物技术快速发展，细胞治疗产品研发不断推进。
+
+2 / 49
+二、技术要求
+第一条 原材料控制
+关键原材料应建立完善的质量控制体系。
+"#;
+
+    let clauses = parser.parse("测试指导原则", sample);
+    assert_eq!(clauses.len(), 2, "TOC with fullwidth dots must be skipped, keeping 2 substantive clauses");
+    assert_eq!(clauses[0].chapter, "一、概述");
+    assert_eq!(clauses[0].page_num, Some(1), "Page '1 / 49' should be extracted as page 1");
+    assert_eq!(clauses[1].chapter, "二、技术要求");
+    assert_eq!(clauses[1].page_num, Some(2), "Page '2 / 49' should be extracted as page 2");
+}
+
+
 
 
 
