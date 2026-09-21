@@ -1,20 +1,20 @@
-# Pharm-RAG 🧬⚖️
+# PharmRAG 🧬⚖️
 
 > **Pharmaceutical Regulatory and GxP SOP Retrieval Engine**  
 > 医药行业药监法规与 GxP 规程检索工具。
 
-[![CI](https://github.com/molezz/Pharm-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/molezz/Pharm-RAG/actions)
+[![CI](https://github.com/molezz/PharmRAG/actions/workflows/ci.yml/badge.svg)](https://github.com/molezz/PharmRAG/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![SQLite](https://img.shields.io/badge/sqlite-FTS5%20Trigram-green.svg)](https://www.sqlite.org/fts5.html)
 
 ---
 
-## 🌟 为什么需要 Pharm-RAG？（Why Pharm-RAG?）
+## 🌟 为什么需要 PharmRAG？（Why PharmRAG?）
 
 在医药行业药学研究（CMC）与 GMP/GxP 规程检索场景下，通用 RAG 工具通常存在以下挑战：
 
-| 评估维度 | 通用开源 / 商业 RAG | **Pharm-RAG (本引擎)** |
+| 评估维度 | 通用开源 / 商业 RAG | **PharmRAG (本引擎)** |
 | :--- | :--- | :--- |
 | **切块粒度** | 机械字符硬切（常截断法条） | **法律语法树（AST）切分**（章-节-条-款完整闭合） |
 | **溯源能力** | 孤立片段，出处模糊 | **挂载大纲层级面包屑 + 原文页码** |
@@ -46,7 +46,7 @@ flowchart TD
     end
 
     subgraph Storage["3. 本地嵌入式存储 (SQLite FTS5 + 密集向量)"]
-        DB[("pharm.db (单文件数据库)")]
+        DB[("pharmrag.db (单文件数据库)")]
         FTS["FTS5 Trigram 全文索引 + BM25"]
         VEC["BGE-M3 语义向量表 (ONNX BLOB)"]
         META["法规效力状态 / 篇章结构 / 页码元数据"]
@@ -87,79 +87,84 @@ flowchart TD
 ## 🚀 快速上手（Quick Start）
 
 ### 1. 安装方式
-
+ 
 #### 方式 A：直接下载预编译二进制包（推荐）
-从 [GitHub Releases](https://github.com/molezz/Pharm-RAG/releases) 页面下载对应操作系统的压缩包，解压后即可直接运行：
+从 [GitHub Releases](https://github.com/molezz/PharmRAG/releases) 页面下载对应操作系统的压缩包，解压后即可直接运行：
 ```bash
-# 解压即可使用
-tar -zxvf pharm-rag-linux-x86_64.tar.gz
-chmod +x pharm-rag
-./pharm-rag --help
+# 解压即可使用（支持 pharmrag 或 pharmRAG 命名）
+tar -zxvf pharmrag-linux-x86_64.tar.gz
+chmod +x pharmrag
+./pharmrag --help
 ```
 
 #### 方式 B：从源码编译（需安装 Rust）
 ```bash
-git clone https://github.com/molezz/Pharm-RAG.git
-cd Pharm-RAG
+git clone https://github.com/molezz/PharmRAG.git
+cd PharmRAG
 cargo build --release
-# 二进制文件位于 target/release/pharm-rag
+# 二进制文件位于 target/release/pharmrag
+# 可安装至全局命令路径：
+cp target/release/pharmrag /usr/local/bin/pharmrag
+ln -sf /usr/local/bin/pharmrag /usr/local/bin/pharmRAG
 ```
 
 ---
 
 ### 2. 命令行常用操作
 
+> 💡 **命令提示**：可执行文件支持 `pharmRAG` 或 `pharmrag`。默认使用当前目录下的 `pharmrag.db`，亦可通过环境变量 `export PHARMRAG_DB="/path/to/pharmrag.db"` 或 `--db` 参数灵活指定数据库路径。
+
 #### 📥 导入单篇或批量导入法规文档（支持自动去重）
 ```bash
 # 导入单篇指导原则（自动识别征求意见稿/试行版/正式版）
-pharm-rag ingest ./CDE-体外基因修饰系统药学研究与评价技术指导原则-202205.pdf
+pharmRAG ingest ./CDE-体外基因修饰系统药学研究与评价技术指导原则-202205.pdf
 
 # 导入企业内部 SOP 规程 (Word)
-pharm-rag ingest ./SOP-QC-2026-无菌检查操作规程.docx
+pharmRAG ingest ./SOP-QC-2026-无菌检查操作规程.docx
 
 # 批量扫描导入整个法规目录（自动识别重复文件并跳过）
-pharm-rag ingest ./cgt_regulations/
+pharmRAG ingest ./cgt_regulations/
 ```
 
 #### 🧠 生成与更新本地语义向量（BGE-M3 / ONNX Runtime）
 ```bash
 # 自动下载并初始化多语言旗舰模型 BGE-M3，为库内法规条目生成密集向量
-pharm-rag embed
+pharmRAG embed
 
 # 可选：使用轻量版模型 BGE-Small-ZH（适合极低资源环境）
-pharm-rag embed --small
+pharmRAG embed --small
 
-# 可选：指定模型存放目录（默认自动保存在程序同级 ./models/ 目录）
-pharm-rag embed --model-dir ./my_models/
+# 可选：指定模型存放目录（默认优先使用 PHARMRAG_MODELS 环境变量，或当前 ./models/，无则回退至标准缓存 ~/.cache/pharmrag/models）
+pharmRAG embed --model-dir ./my_models/
 ```
 
 #### 🔍 法规检索（支持 FTS5 Trigram 与 BGE-M3 混合检索）
 ```bash
 # 1. 默认精确检索（Trigram 匹配医药专有名词）
-pharm-rag search "CAR-T 无菌检查"
+pharmRAG search "CAR-T 无菌检查"
 
 # 2. 跨语言语义混合检索（RRF 倒数排名融合，支持中文语义检索英文指南）
-pharm-rag search "AAV 宿主细胞DNA残留限度" --hybrid --limit 3
+pharmRAG search "AAV 宿主细胞DNA残留限度" --hybrid --limit 3
 
 # 3. 现行法规模式：仅检索现行正式版与试行版，过滤征求意见稿
-pharm-rag search "RCL 检测" --only-effective
+pharmRAG search "RCL 检测" --only-effective
 
 # 4. 指定仅检索征求意见稿，了解药监审评最新风向
-pharm-rag search "复制型病毒" --status draft
+pharmRAG search "复制型病毒" --status draft
 
 # 5. 指定返回最多 3 条，并输出格式化 JSON 供下游代码或 Agent 解析
-pharm-rag search "药学变更 控制" --limit 3 --json
+pharmRAG search "药学变更 控制" --limit 3 --json
 ```
 
 #### 📊 查看法规库统计（含效力状态与向量覆盖率）
 ```bash
-pharm-rag stats
+pharmRAG stats
 ```
 输出示例：
 ```text
-📊 Pharm-RAG 状态统计
+📊 PharmRAG 状态统计
 ─────────────────────────────
-  数据库文件:     pharm.db
+  数据库文件:     pharmrag.db
   已索引文档总数: 8
     ├─ 现行/试行版: 6
     └─ 征求意见稿: 2
@@ -171,16 +176,16 @@ pharm-rag stats
 #### 👀 开启法规文件夹自动同步监听
 ```bash
 # 将新法规 PDF/DOCX 放入该文件夹，后台自动完成解析入库
-pharm-rag watch ./incoming_regulations/
+pharmRAG watch ./incoming_regulations/
 ```
 
 #### 🌐 启动本地 HTTP API & MCP Server（支持安全鉴权与本地绑定）
 ```bash
 # 默认仅绑定本地 127.0.0.1，保障企业规程内网安全
-pharm-rag serve --host 127.0.0.1 --port 8080
+pharmRAG serve --host 127.0.0.1 --port 8080
 
-# 可选：开启 Bearer Token 访问控制（亦可通过环境变量 export PHARM_RAG_API_KEY=your-secret）
-pharm-rag serve --host 127.0.0.1 --port 8080 --api-key "my-secure-token"
+# 可选：开启 Bearer Token 访问控制（亦可通过环境变量 export PHARMRAG_API_KEY=your-secret）
+pharmRAG serve --host 127.0.0.1 --port 8080 --api-key "my-secure-token"
 ```
 - **REST 检索接口**：`GET http://127.0.0.1:8080/api/v1/search?q=慢病毒滴度&limit=3`
 - **状态统计接口**：`GET http://127.0.0.1:8080/api/v1/stats`
@@ -190,13 +195,13 @@ pharm-rag serve --host 127.0.0.1 --port 8080 --api-key "my-secure-token"
 
 ## 🤖 AI Agent 接入指引 (Agent-Ready Protocol)
 
-Pharm-RAG 专为 AI Agent（Hermes、Antigravity、Pi、Claude、Cursor 等）设计，支持三种灵活接入方式：
+PharmRAG 专为 AI Agent（Hermes、Antigravity、Pi、Claude、Cursor 等）设计，支持三种灵活接入方式：
 
 ### 方式 1：CLI JSON 模式（推荐用于具身/命令行 Agent）
 若 Agent 拥有 Shell/Bash 执行环境（如 Hermes、AGY、Pi），直接调用命令行并追加 `--json` 参数即可获得结构化数据：
 
 ```bash
-pharm-rag search "无菌检查 规程" --limit 3 --json
+pharmRAG search "无菌检查 规程" --limit 3 --json
 ```
 
 **返回的 JSON 结构规范：**
@@ -244,14 +249,14 @@ curl -s "http://127.0.0.1:8080/api/v1/search?q=无菌检查&limit=2" \
 ---
 
 ### 方式 3：Model Context Protocol (MCP Server)
-Pharm-RAG 原生支持标准 MCP 协议，暴露 `search_regulations` 工具。
+PharmRAG 原生支持标准 MCP 协议，暴露 `search_regulations` 工具。
 
 #### 接入 Hermes Agent / Open-WebUI
 在 Hermes 的 `hermes_config.json` 中配置：
 ```json
 {
   "mcp_servers": {
-    "pharm_rag": {
+    "pharmrag": {
       "url": "http://127.0.0.1:8080/mcp",
       "description": "Pharmaceutical Regulatory and GxP SOP Retrieval Engine"
     }
@@ -264,8 +269,8 @@ Pharm-RAG 原生支持标准 MCP 协议，暴露 `search_regulations` 工具。
 ```json
 {
   "mcpServers": {
-    "pharm-rag": {
-      "command": "/path/to/pharm-rag",
+    "pharmrag": {
+      "command": "/usr/local/bin/pharmrag",
       "args": ["serve", "--host", "127.0.0.1", "--port", "8080"]
     }
   }

@@ -1,16 +1,16 @@
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::{Path, PathBuf};
-use pharm_rag::parser::parse_file;
-use pharm_rag::storage::{Database, compute_file_hash};
+use pharmrag::parser::parse_file;
+use pharmrag::storage::{Database, compute_file_hash};
 
 #[derive(Parser)]
-#[command(name = "pharm-rag")]
+#[command(name = "pharmrag")]
 #[command(about = "Pharmaceutical Regulatory and GxP SOP Retrieval Engine", long_about = None)]
 #[command(version)]
 struct Cli {
     /// Custom path to SQLite database file
-    #[arg(long, global = true, default_value = "pharm.db")]
+    #[arg(long, global = true, default_value = "pharmrag.db")]
     db: PathBuf,
 
     #[command(subcommand)]
@@ -83,7 +83,15 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let db_path = cli.db;
+    let db_path = if cli.db == PathBuf::from("pharmrag.db") || cli.db == PathBuf::from("pharm.db") {
+        if let Ok(env_db) = std::env::var("PHARMRAG_DB").or_else(|_| std::env::var("PHARM_RAG_DB")) {
+            PathBuf::from(env_db)
+        } else {
+            cli.db
+        }
+    } else {
+        cli.db
+    };
 
     match cli.command {
         Commands::Ingest { path, status } => {
@@ -97,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Embed { model_dir, small } => {
             let db = Database::open(&db_path)?;
-            let engine = pharm_rag::storage::SemanticEngine::new(model_dir, !small)?;
+            let engine = pharmrag::storage::SemanticEngine::new(model_dir, !small)?;
             let unembedded = db.get_unembedded_clauses()?;
             if unembedded.is_empty() {
                 println!("🎉 所有法规条款均已生成向量索引！无需重复计算。");
@@ -112,10 +120,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         db.save_clause_embedding(item.0, emb)?;
                     }
                     processed += chunk.len();
-                    print!("\r  ⚡ 进度: {} / {} ({:.1}%)", processed, total, (processed as f64 / total as f64) * 100.0);
-                    std::io::Write::flush(&mut std::io::stdout())?;
+                    let pct = (processed as f64 / total as f64) * 100.0;
+                    print!("\r🚀 进度: {}/{} ({:.1}%)", processed, total, pct);
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
                 }
-                println!("\n✅ 成功完成 {} 个条款的语义向量生成！已持久化至 SQLite 数据库。", total);
+                println!("\n✨ 语义向量嵌入生成完毕！");
             }
         }
         Commands::Search { query, limit, hybrid, model_dir, status, only_effective, json } => {
@@ -128,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let start = std::time::Instant::now();
             let results = if hybrid {
-                let engine = pharm_rag::storage::SemanticEngine::new(model_dir, true)?;
+                let engine = pharmrag::storage::SemanticEngine::new(model_dir, true)?;
                 let q_vec = engine.embed_query(&query)?;
                 db.search_hybrid(&query, &q_vec, limit, status_filter)?
             } else {
@@ -167,12 +177,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Watch { dir } => {
-            pharm_rag::watcher::watch_directory(dir, db_path)?;
+            pharmrag::watcher::watch_directory(dir, db_path)?;
         }
         Commands::Serve { host, port, api_key } => {
-            let api_key = api_key.or_else(|| std::env::var("PHARM_RAG_API_KEY").ok());
+            let api_key = api_key
+                .or_else(|| std::env::var("PHARMRAG_API_KEY").ok())
+                .or_else(|| std::env::var("PHARM_RAG_API_KEY").ok());
             let db = Database::open(&db_path)?;
-            pharm_rag::server::run_server(db, &host, port, api_key).await?;
+            pharmrag::server::run_server(db, &host, port, api_key).await?;
         }
         Commands::Stats => {
             let db = Database::open(&db_path)?;
@@ -180,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (embedded, total_clauses) = db.get_embedding_stats().unwrap_or((0, clauses));
             let pct = if total_clauses > 0 { (embedded as f64 / total_clauses as f64) * 100.0 } else { 0.0 };
 
-            println!("\n📊 {} 状态统计", "Pharm-RAG".bold().green());
+            println!("\n📊 {} 状态统计", "PharmRAG".bold().green());
             println!("─────────────────────────────");
             println!("  数据库文件:     {}", db_path.display());
             println!("  已索引文档总数: {}", docs.to_string().cyan());
@@ -212,10 +224,10 @@ fn ingest_single_file(db: &mut Database, path: &Path, override_status: Option<&s
     };
 
     match db.save_document(title, &p_str, &hash, status, &clauses)? {
-        pharm_rag::storage::SaveOutcome::Saved { clause_count, .. } => {
+        pharmrag::storage::SaveOutcome::Saved { clause_count, .. } => {
             println!("✅ 成功录入: {} [{}] (共切分出 {} 条法规条款)", title.bold().green(), status.yellow(), clause_count);
         }
-        pharm_rag::storage::SaveOutcome::DuplicateSkipped { existing_title, existing_path } => {
+        pharmrag::storage::SaveOutcome::DuplicateSkipped { existing_title, existing_path } => {
             println!("⏭️  {} 检测到文件内容与已收录的《{}》（{}）完全一致（SHA-256指纹相同），已自动去重跳过，避免法规条目冗余污染。",
                 "跳过重复文件:".bold().yellow(),
                 existing_title.cyan(),
@@ -252,12 +264,12 @@ fn ingest_dir(db: &mut Database, dir: &Path, override_status: Option<&str>) -> R
                     };
 
                     match db.save_document(title, &p_str, &hash, status, &clauses) {
-                        Ok(pharm_rag::storage::SaveOutcome::Saved { clause_count, .. }) => {
+                        Ok(pharmrag::storage::SaveOutcome::Saved { clause_count, .. }) => {
                             total_files += 1;
                             total_clauses += clause_count;
                             println!("  ✓ 已索引: {} [{}] ({} 条目)", title, status.yellow(), clause_count);
                         }
-                        Ok(pharm_rag::storage::SaveOutcome::DuplicateSkipped { existing_title, .. }) => {
+                        Ok(pharmrag::storage::SaveOutcome::DuplicateSkipped { existing_title, .. }) => {
                             skipped_duplicates += 1;
                             println!("  ⏭️  已去重跳过: {} (与《{}》内容完全一致)", title.yellow(), existing_title.cyan());
                         }

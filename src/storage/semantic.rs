@@ -11,19 +11,23 @@ impl SemanticEngine {
     /// Initialize with auto-detection of model directory and environment endpoint
     pub fn new(custom_model_dir: Option<PathBuf>, use_large_m3: bool) -> Result<Self, Box<dyn std::error::Error>> {
 
-        // Step 2: Determine model storage path (Priority: custom > ./models/ > ~/.cache/pharm-rag/models/)
+        // Step 2: Determine model storage path (Priority: custom > PHARMRAG_MODELS > ./models/ (if exists) > ~/.cache/pharmrag/models/)
         let model_dir = if let Some(dir) = custom_model_dir {
             dir
+        } else if let Ok(env_models) = std::env::var("PHARMRAG_MODELS").or_else(|_| std::env::var("PHARM_RAG_MODELS")) {
+            PathBuf::from(env_models)
+        } else if std::path::Path::new("./models").exists() {
+            PathBuf::from("./models")
         } else {
-            let local_dir = PathBuf::from("./models");
-            if local_dir.exists() || std::fs::create_dir_all(&local_dir).is_ok() {
-                local_dir
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let legacy_cache = PathBuf::from(&home).join(".cache").join("pharm-rag").join("models");
+            if legacy_cache.exists() {
+                legacy_cache
             } else {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                PathBuf::from(home)
-                    .join(".cache")
-                    .join("pharm-rag")
-                    .join("models")
+                let cache_base = std::env::var("XDG_CACHE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from(home).join(".cache"));
+                cache_base.join("pharmrag").join("models")
             }
         };
 
@@ -33,12 +37,12 @@ impl SemanticEngine {
             (EmbeddingModel::BGESmallZHV15, "BGE-Small-ZH-v1.5")
         };
 
-        println!("🧠 Initializing semantic engine: {}...", name);
-        println!("📁 Model cache directory: {}", model_dir.display());
+        eprintln!("🧠 Initializing semantic engine: {}...", name);
+        eprintln!("📁 Model cache directory: {}", model_dir.display());
 
         let options = TextInitOptions::new(model_type)
             .with_cache_dir(model_dir)
-            .with_show_download_progress(true);
+            .with_show_download_progress(false);
 
         let model = TextEmbedding::try_new(options)?;
 

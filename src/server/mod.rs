@@ -60,9 +60,9 @@ pub async fn run_server(
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     if api_key.is_some() {
-        println!("🚀 Pharm-RAG API & MCP Server listening on http://{} (Bearer Auth Enabled)", addr);
+        println!("🚀 PharmRAG API & MCP Server listening on http://{} (Bearer Auth Enabled)", addr);
     } else {
-        println!("🚀 Pharm-RAG API & MCP Server listening on http://{}", addr);
+        println!("🚀 PharmRAG API & MCP Server listening on http://{}", addr);
     }
 
     axum::serve(listener, app).await?;

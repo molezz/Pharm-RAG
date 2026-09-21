@@ -1,5 +1,5 @@
-use pharm_rag::parser::regulatory::RegulatoryParser;
-use pharm_rag::storage::Database;
+use pharmrag::parser::regulatory::RegulatoryParser;
+use pharmrag::storage::Database;
 
 #[test]
 fn test_regulatory_ast_parser() {
@@ -65,19 +65,19 @@ fn test_deduplication() {
 
     // First save: should succeed
     let outcome1 = db.save_document("法规A", "path/to/a.pdf", "sha256_identical", "effective", &clauses).unwrap();
-    assert!(matches!(outcome1, pharm_rag::storage::SaveOutcome::Saved { .. }));
+    assert!(matches!(outcome1, pharmrag::storage::SaveOutcome::Saved { .. }));
 
     // Second save with different name and path, but identical hash: should be skipped!
     let outcome2 = db.save_document("法规A2026改名", "path/to/a_renamed.pdf", "sha256_identical", "effective", &clauses).unwrap();
-    assert!(matches!(outcome2, pharm_rag::storage::SaveOutcome::DuplicateSkipped { .. }));
+    assert!(matches!(outcome2, pharmrag::storage::SaveOutcome::DuplicateSkipped { .. }));
 }
 
 #[test]
 fn test_distinct_files_hash_saved_and_compute_file_hash() {
     use std::io::Write;
-    use pharm_rag::storage::compute_file_hash;
+    use pharmrag::storage::compute_file_hash;
 
-    let dir = std::env::temp_dir().join(format!("test_pharm_rag_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let dir = std::env::temp_dir().join(format!("test_pharmrag_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
     std::fs::create_dir_all(&dir).unwrap();
     let file1 = dir.join("doc1.txt");
     let file2 = dir.join("doc2.txt");
@@ -98,13 +98,13 @@ fn test_distinct_files_hash_saved_and_compute_file_hash() {
     let res2 = db.save_document("法规B", file2.to_str().unwrap(), &hash2, "effective", &clauses).unwrap();
 
     // Both distinct files must be successfully saved
-    assert!(matches!(res1, pharm_rag::storage::SaveOutcome::Saved { .. }));
-    assert!(matches!(res2, pharm_rag::storage::SaveOutcome::Saved { .. }));
+    assert!(matches!(res1, pharmrag::storage::SaveOutcome::Saved { .. }));
+    assert!(matches!(res2, pharmrag::storage::SaveOutcome::Saved { .. }));
 }
 
 #[test]
 fn test_like_wildcard_escaping() {
-    use pharm_rag::storage::escape_like;
+    use pharmrag::storage::escape_like;
 
     assert_eq!(escape_like("normal text"), "normal text");
     assert_eq!(escape_like("100% pure"), "100\\% pure");

@@ -18,20 +18,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: pharm-rag
-            asset_name: pharm-rag-linux-x86_64.tar.gz
+            artifact_name: pharmrag
+            asset_name: pharmrag-linux-x86_64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: pharm-rag
-            asset_name: pharm-rag-macos-arm64.tar.gz
+            artifact_name: pharmrag
+            asset_name: pharmrag-macos-arm64.tar.gz
           - os: macos-13
             target: x86_64-apple-darwin
-            artifact_name: pharm-rag
-            asset_name: pharm-rag-macos-x86_64.tar.gz
+            artifact_name: pharmrag
+            asset_name: pharmrag-macos-x86_64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: pharm-rag.exe
-            asset_name: pharm-rag-windows-x86_64.zip
+            artifact_name: pharmrag.exe
+            asset_name: pharmrag-windows-x86_64.zip
 
     steps:
       - name: Checkout repository

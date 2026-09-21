@@ -1,11 +1,11 @@
 [package]
-name = "pharm-rag"
+name = "pharmrag"
 version = "0.2.2"
 edition = "2021"
-authors = ["Pharm-RAG Contributors"]
+authors = ["PharmRAG Contributors"]
 description = "Pharmaceutical Regulatory and GxP SOP Retrieval Engine"
 license = "Apache-2.0"
-repository = "https://github.com/molezz/Pharm-RAG"
+repository = "https://github.com/molezz/PharmRAG"
 keywords = ["pharmaceutical", "regulatory", "gmp", "rag", "sqlite"]
 categories = ["command-line-utilities", "database-implementations"]
 
