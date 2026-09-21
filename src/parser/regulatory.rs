@@ -59,7 +59,7 @@ impl RegulatoryParser {
         let mut current_lines = Vec::new();
         let mut current_page: Option<i32> = None;
 
-        let re_page = Regex::new(r"\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|(?m)^\s*(\d+)\s*$").unwrap();
+        let re_page = Regex::new(r"(?i)\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|第\s*(\d+)\s*页(?:\s*[/共]|\s*$)|(?:^|\b)Page\s+(\d+)\b|(?m)^\s*(\d{1,4})\s*$").unwrap();
 
         let flush_clause = |clauses: &mut Vec<Clause>,
                             chapter: &str,
@@ -111,7 +111,12 @@ impl RegulatoryParser {
 
             // Check for page marker
             if let Some(caps) = re_page.captures(trimmed) {
-                if let Some(p) = caps.get(1).or_else(|| caps.get(2)) {
+                let page_match = caps.get(1)
+                    .or_else(|| caps.get(2))
+                    .or_else(|| caps.get(3))
+                    .or_else(|| caps.get(4))
+                    .or_else(|| caps.get(5));
+                if let Some(p) = page_match {
                     if let Ok(num) = p.as_str().parse::<i32>() {
                         current_page = Some(num);
                         continue;
