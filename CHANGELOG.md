@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.4] - 2026-09-21
+
+### Added
+- **透出底层真实相关性分数（透明召回可解释性）**：
+  - 在 `SearchResult` 数据结构中新增 `semantic_score: Option<f64>`（BGE-M3 余弦相似度）、`fts_score: Option<f64>`（SQLite FTS5 BM25 得分）和 `rerank_score: Option<f64>`（预留字段），且 `score` 继续保留 RRF 融合分，保持向下完全兼容。
+  - CLI 输出表头直观展示真实语义相似度和 FTS 得分，辅助人工复核与合规审计。
+
+### Fixed
+- **解决 `--hybrid` 检索无法区分无关查询并返回满额噪声的问题**：
+  - 当查询无全文索引命中（FTS 命中文档为 0）时，对纯语义向量召回引入相关性截断阈值（默认 0.40），杜绝如“火星种土豆”、“量子计算机操作系统”等完全无关查询仍返回满额误导性条款，确保无关查询老实返回 `[]`。
+  - 支持通过 `--min-score <FLOAT>` 参数自定义语义阈值下限。
+
+---
+
 ## [v0.2.3] - 2026-09-21
 
 ### Fixed

@@ -240,6 +240,9 @@ impl Database {
                         clause: item.0,
                         score: item.1,
                         match_strategy: "FTS5_Trigram".to_string(),
+                        semantic_score: None,
+                        fts_score: Some(item.1),
+                        rerank_score: None,
                     });
                 }
             }
@@ -296,6 +299,9 @@ impl Database {
                     clause: item,
                     score: 1.0,
                     match_strategy: "Substring_LIKE_Fallback".to_string(),
+                    semantic_score: None,
+                    fts_score: Some(1.0),
+                    rerank_score: None,
                 });
             }
         }
@@ -435,41 +441,61 @@ impl Database {
             clause,
             score: sim,
             match_strategy: "BGE_M3_Semantic".to_string(),
+            semantic_score: Some(sim),
+            fts_score: None,
+            rerank_score: None,
         }).collect();
 
         Ok(results)
     }
 
     /// Hybrid Search: Combining SQLite FTS5 (Trigram) and BGE-M3 (Dense Vector) with Reciprocal Rank Fusion (RRF)
+    /// Exposes transparent raw scores: `semantic_score` (BGE-M3 cosine similarity) and `fts_score` (BM25).
+    /// When FTS yields 0 hits, candidates below `min_score` (default 0.40) are filtered to prevent irrelevant noise.
     pub fn search_hybrid(&self, query: &str, query_vector: &[f32], limit: usize, status_filter: Option<&str>, min_score: Option<f64>) -> Result<Vec<SearchResult>> {
         let candidate_limit = (limit * 3).max(20);
         let fts_results = self.search(query, candidate_limit, status_filter)?;
-        let vec_results = self.search_vector(query_vector, candidate_limit, status_filter, min_score)?;
+        let vec_results = self.search_vector(query_vector, candidate_limit, status_filter, None)?;
+
+        let has_fts_hits = !fts_results.is_empty();
+        // Cutoff threshold for semantic relevance when FTS does not match (default 0.40 for BGE-M3)
+        let semantic_cutoff = min_score.unwrap_or(0.40);
 
         // RRF Constant k = 60
         const K: f64 = 60.0;
-        let mut rrf_scores: std::collections::HashMap<i64, (Clause, f64, bool, bool)> = std::collections::HashMap::new();
+        // Map: clause_id -> (Clause, rrf_score, in_fts, in_vec, fts_score, semantic_score)
+        let mut rrf_scores: std::collections::HashMap<i64, (Clause, f64, bool, bool, Option<f64>, Option<f64>)> = std::collections::HashMap::new();
 
         for (rank, item) in fts_results.iter().enumerate() {
             if let Some(id) = item.clause.id {
                 let rrf = 1.0 / (K + rank as f64 + 1.0);
-                rrf_scores.insert(id, (item.clause.clone(), rrf, true, false));
+                rrf_scores.insert(id, (item.clause.clone(), rrf, true, false, item.fts_score, None));
             }
         }
 
         for (rank, item) in vec_results.iter().enumerate() {
             if let Some(id) = item.clause.id {
+                let sim = item.semantic_score.unwrap_or(item.score);
+                // If there are no FTS hits for this query, filter out low-similarity semantic hits
+                if !has_fts_hits && sim < semantic_cutoff {
+                    continue;
+                }
+
                 let rrf = 1.0 / (K + rank as f64 + 1.0);
                 if let Some(entry) = rrf_scores.get_mut(&id) {
                     entry.1 += rrf;
                     entry.3 = true; // Both FTS and Vector matched!
+                    entry.5 = Some(sim);
                 } else {
-                    rrf_scores.insert(id, (item.clause.clone(), rrf, false, true));
+                    // Only add pure vector hit if it passes cutoff (or if user specified custom min_score)
+                    if sim >= min_score.unwrap_or(0.35) {
+                        rrf_scores.insert(id, (item.clause.clone(), rrf, false, true, None, Some(sim)));
+                    }
                 }
             }
         }
 
-        let mut combined: Vec<(Clause, f64, String)> = rrf_scores.into_values().map(|(clause, score, in_fts, in_vec)| {
+        let mut combined: Vec<(Clause, f64, String, Option<f64>, Option<f64>)> = rrf_scores.into_values().map(|(clause, score, in_fts, in_vec, fts_score, semantic_score)| {
             let strategy = if in_fts && in_vec {
                 "Hybrid_RRF (FTS5 + BGE-M3)".to_string()
             } else if in_fts {
@@ -477,7 +503,7 @@ impl Database {
             } else {
                 "BGE_M3_Semantic".to_string()
             };
-            (clause, score, strategy)
+            (clause, score, strategy, semantic_score, fts_score)
         }).collect();
 
         combined.sort_by(|a, b| {
@@ -498,10 +524,13 @@ impl Database {
 
         combined.truncate(limit);
 
-        let results = combined.into_iter().map(|(clause, score, strategy)| SearchResult {
+        let results = combined.into_iter().map(|(clause, score, strategy, semantic_score, fts_score)| SearchResult {
             clause,
             score,
             match_strategy: strategy,
+            semantic_score,
+            fts_score,
+            rerank_score: None,
         }).collect();
 
         Ok(results)

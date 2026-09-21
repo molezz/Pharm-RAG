@@ -178,10 +178,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     println!("─────────────────────────────────────────────────────────────────");
                     println!("【{}】 {}  {}", i + 1, res.clause.breadcrumb.bold().cyan(), badge);
+                    let mut score_info = format!("召回策略: {}", res.match_strategy.yellow());
+                    if let Some(sim) = res.semantic_score {
+                        score_info.push_str(&format!(" | 语义相似度: {:.4}", sim));
+                    }
+                    if let Some(bm25) = res.fts_score {
+                        score_info.push_str(&format!(" | FTS得分: {:.2}", bm25));
+                    }
+
                     if let Some(p) = res.clause.page_num {
-                        println!("📄 页码: 第 {} 页 | 召回策略: {}", p, res.match_strategy.yellow());
+                        println!("📄 页码: 第 {} 页 | {}", p, score_info);
                     } else {
-                        println!("📄 召回策略: {}", res.match_strategy.yellow());
+                        println!("📄 {}", score_info);
                     }
                     
                     if res.clause.status == "draft" {

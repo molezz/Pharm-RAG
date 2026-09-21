@@ -227,5 +227,47 @@ fn test_compute_file_hash_error_on_missing_file() {
     assert!(res.is_err(), "compute_file_hash must return Err for nonexistent file instead of a constant fallback string");
 }
 
+#[test]
+fn test_search_result_scores_and_hybrid_threshold() {
+    let mut db = Database::open_in_memory().expect("Failed to open memory db");
+    let parser = RegulatoryParser::new();
+    let sample = r#"
+第一章 质量控制
+第一条 慢病毒载体检测
+慢病毒载体收获液应进行RVV（复制型病毒）检查和滴度测定。
+"#;
+    let clauses = parser.parse("测试规程", sample);
+    db.save_document("测试规程", "sample.md", "hash1", "effective", &clauses).expect("Save doc failed");
+
+    // Save a dummy embedding
+    let dummy_emb = vec![1.0f32; 1024];
+    db.save_clause_embedding(1, &dummy_emb).expect("Save embedding failed");
+
+    // 1. FTS Search exposes fts_score
+    let fts_res = db.search("慢病毒", 5, None).expect("FTS search failed");
+    assert_eq!(fts_res.len(), 1);
+    assert!(fts_res[0].fts_score.is_some());
+    assert!(fts_res[0].semantic_score.is_none());
+
+    // 2. Vector Search exposes semantic_score
+    let vec_res = db.search_vector(&dummy_emb, 5, None, None).expect("Vector search failed");
+    assert_eq!(vec_res.len(), 1);
+    assert!(vec_res[0].semantic_score.is_some());
+    assert!(vec_res[0].fts_score.is_none());
+
+    // 3. Hybrid search when matching both
+    let hybrid_both = db.search_hybrid("慢病毒", &dummy_emb, 5, None, None).expect("Hybrid search failed");
+    assert_eq!(hybrid_both.len(), 1);
+    assert!(hybrid_both[0].semantic_score.is_some());
+    assert!(hybrid_both[0].fts_score.is_some());
+    assert_eq!(hybrid_both[0].match_strategy, "Hybrid_RRF (FTS5 + BGE-M3)");
+
+    // 4. Hybrid search when FTS has 0 hits and vector similarity is low (e.g. orthogonal vector)
+    let orthogonal_emb = vec![0.0f32; 1024]; // similarity with dummy_emb will be 0.0 < 0.40 cutoff
+    let hybrid_irrelevant = db.search_hybrid("火星种土豆", &orthogonal_emb, 5, None, None).expect("Hybrid search failed");
+    assert!(hybrid_irrelevant.is_empty(), "Irrelevant queries with 0 FTS matches and low similarity must be filtered out");
+}
+
+
 
 

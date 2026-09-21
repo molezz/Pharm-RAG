@@ -31,4 +31,9 @@ pub struct SearchResult {
     pub clause: Clause,
     pub score: f64,
     pub match_strategy: String,
+    pub semantic_score: Option<f64>,
+    pub fts_score: Option<f64>,
+    pub rerank_score: Option<f64>,
 }
+
+
