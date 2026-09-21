@@ -20,7 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       
       - name: Install System Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -28,8 +27,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libssl-dev
 
+      - uses: Swatinem/rust-cache@v2
+
+
       - name: Cargo Check
-        run: cargo check --verbose
+        run: cargo check --verbose || (echo "=== CARGO CHECK FAILED ===" && exit 1)
 
       - name: Cargo Test
         run: cargo test --verbose
+
