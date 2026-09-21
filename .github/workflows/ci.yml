@@ -31,8 +31,11 @@ jobs:
 
 
       - name: Cargo Check
-        run: cargo check --verbose || (echo "=== CARGO CHECK FAILED ===" && exit 1)
+        run: |
+          cargo check --verbose || { echo "Cargo check failed"; exit 1; }
 
       - name: Cargo Test
-        run: cargo test --verbose
+        run: |
+          cargo test --verbose || { echo "Cargo test failed"; exit 1; }
+
 
