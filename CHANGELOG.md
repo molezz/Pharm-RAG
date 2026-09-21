@@ -11,11 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **透出底层真实相关性分数（透明召回可解释性）**：
   - 在 `SearchResult` 数据结构中新增 `semantic_score: Option<f64>`（BGE-M3 余弦相似度）、`fts_score: Option<f64>`（SQLite FTS5 BM25 得分）和 `rerank_score: Option<f64>`（预留字段），且 `score` 继续保留 RRF 融合分，保持向下完全兼容。
   - CLI 输出表头直观展示真实语义相似度和 FTS 得分，辅助人工复核与合规审计。
+- **目录页 Ingest 期默认过滤与检索期双层兜底**：
+  - 在 `RegulatoryParser::parse()` 最终输出阶段加入全局 Clause 级过滤，彻底杜绝目录项落库。
+  - `--exclude-toc` 明确定义为检索期二次兜底开关。
+- **递归目录扫描入库支持**：
+  - `ingest_dir` 支持递归遍历多层子目录（如 `raw/cde/`、`raw/fda/`），自动过滤提取 `.pdf`、`.docx`、`.md`、`.txt` 文档。
 
 ### Fixed
 - **解决 `--hybrid` 检索无法区分无关查询并返回满额噪声的问题**：
   - 当查询无全文索引命中（FTS 命中文档为 0）时，对纯语义向量召回引入相关性截断阈值（默认 0.40），杜绝如“火星种土豆”、“量子计算机操作系统”等完全无关查询仍返回满额误导性条款，确保无关查询老实返回 `[]`。
-  - 支持通过 `--min-score <FLOAT>` 参数自定义语义阈值下限。
+  - 支持通过 `--min-score <FLOAT>` 参数自定义语义阈值下限，明确“不传走默认阈值 0.40，显式传 0.0 则关闭过滤”。
+- **PDF 紧凑页码与全角符号 TOC 解析兼容**：
+  - 修复 `re_noise` 误杀形如 `1 / 49` 的分数形式页码，实现 PDF 页码 100% 精确提取与 GxP 条款溯源。
+  - 扩展点导线正则支持全角点 `．`、中间点 `·` 与中文省略号 `…`。
+- **Ubuntu 22.04 CI 构建兼容性修复**：
+  - CI 与 Release 流水线中补充 `pkg-config` 和 `libssl-dev` 依赖，解决低版本 Ubuntu 镜像缺失构建工具导致失败的问题。
+
 
 ---
 
