@@ -32,14 +32,15 @@ jobs:
 
       - name: Cargo Check
         run: |
-          cargo check --verbose 2>&1 | tee cargo_check.log || {
-            echo "### Cargo Check Failed on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 100 cargo_check.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat cargo_check.log
-            exit 1
-          }
+          cargo check --verbose 2>&1 | tee cargo_check.log
+
+      - name: Upload Build Log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-check-${{ matrix.os }}-log
+          path: cargo_check.log
+
 
       - name: Cargo Test
         run: |
