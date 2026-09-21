@@ -284,6 +284,14 @@ impl RegulatoryParser {
             }
         }
 
+        // Post-filter: Guarantee that any residual TOC / catalogue entries are excluded at ingest time
+        clauses.retain(|c| {
+            let is_toc_content = self.is_toc(&c.content);
+            let is_toc_article = self.is_toc(&c.article);
+            let is_toc_chapter = self.is_toc(&c.chapter);
+            !(is_toc_content || is_toc_article || is_toc_chapter)
+        });
+
         clauses
     }
 }

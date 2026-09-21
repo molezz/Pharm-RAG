@@ -152,11 +152,15 @@ pharmRAG search "RCL 检测" --only-effective
 # 4. 指定仅检索征求意见稿，了解药监审评最新风向
 pharmRAG search "复制型病毒" --status draft
 
-# 5. 设置相关性分数阈值（如过滤无关硬凑结果）与排除目录条目
-pharmRAG search "药学变更" --hybrid --min-score 0.4 --exclude-toc
+# 5. 设置相关性分数阈值与目录排除开关
+# - 混合检索内置相关性截断（FTS 0命中时默认阈值为 0.40），无关查询（如"如何在火星种土豆"）自动返回 []
+# - 不传 --min-score 走内置默认阈值 (0.40)；显式传 --min-score 0.0 则关闭阈值过滤
+# - 文档入库（ingest）期已默认剔除目录页；--exclude-toc 是检索期的二次兜底过滤
+pharmRAG search "药学变更" --hybrid --min-score 0.45 --exclude-toc
 
 # 6. 指定返回最多 3 条，并输出格式化 JSON 供下游代码或 Agent 解析
 pharmRAG search "药学变更 控制" --limit 3 --json
+
 ```
 
 #### 📊 查看法规库统计（含效力状态与向量覆盖率）
@@ -224,14 +228,25 @@ pharmRAG search "无菌检查 规程" --limit 3 --json
       "table_data": null,
       "status": "effective"
     },
-    "score": -2.85,
-    "match_strategy": "FTS5_Trigram"
+    "score": 0.0325,
+    "match_strategy": "Hybrid_RRF (FTS5 + BGE-M3)",
+    "semantic_score": 0.5842,
+    "fts_score": -4.21,
+    "rerank_score": null
   }
 ]
 ```
-> **字段效力说明**：
-> - `clause.status` 包含四种枚举：`effective`（现行）、`trial`（试行）、`draft`（征求意见稿）、`superseded`（已废止）。
-> - Agent 可通过 `--only-effective` 标志在查询时直接过滤草案与历史版本。
+> **评分与排序字段口径说明**：
+> - `score`（统一排序得分）：
+>   - 在纯精确检索下为 SQLite FTS5 BM25 得分；
+>   - 在 `--hybrid` 模式下为 **RRF（Reciprocal Rank Fusion 倒数排名融合得分）**（公式：`1/(60 + rank)`），用于跨检索源多模融合的相对优先级排序，**不可直接视为 0~1 的绝对相似度**。
+> - `semantic_score`（原始语义余弦相似度）：
+>   - 透出 BGE-M3 密集向量与查询文本的真实 Cosine 相似度（取值范围 `0.0 ~ 1.0`）。下游应用或 Agent 判断条款语义相关性置信度时，**应优先以此字段作为绝对阈值参考**（通常建议 `0.40 ~ 0.60`）。
+> - `fts_score`（BM25 词频匹配分）：
+>   - 当条款命中了全文索引关键字时透出该分值，否则为 `null`。
+> - `clause.status`（法规效力状态）：
+>   - 包含四种枚举：`effective`（现行）、`trial`（试行）、`draft`（征求意见稿）、`superseded`（已废止）。Agent 可通过 `--only-effective` 在检索时过滤草案。
+
 
 ---
 

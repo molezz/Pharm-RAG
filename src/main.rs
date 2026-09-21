@@ -55,10 +55,10 @@ enum Commands {
         /// Only show in-force regulations (effective and trial), filtering out drafts
         #[arg(long)]
         only_effective: bool,
-        /// Minimum relevance score threshold (for dense semantic retrieval, typically 0.3 - 0.7)
+        /// Minimum semantic relevance score threshold (0.0 - 1.0). In hybrid mode, defaults to 0.40 cutoff when FTS yields 0 hits; passing explicit 0.0 disables cutoff
         #[arg(long)]
         min_score: Option<f64>,
-        /// Exclude table-of-contents / catalogue entries
+        /// Search-time filter to exclude any residual table-of-contents / catalogue entries (ingest also filters TOC by default)
         #[arg(long)]
         exclude_toc: bool,
         /// Output formatted JSON instead of human-readable text
