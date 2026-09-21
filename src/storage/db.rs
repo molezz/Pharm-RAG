@@ -341,7 +341,7 @@ impl Database {
     }
 
     /// Dense semantic vector search using cosine similarity
-    pub fn search_vector(&self, query_vector: &[f32], limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
+    pub fn search_vector(&self, query_vector: &[f32], limit: usize, status_filter: Option<&str>, min_score: Option<f64>) -> Result<Vec<SearchResult>> {
         if limit == 0 || query_vector.is_empty() {
             return Ok(Vec::new());
         }
@@ -400,6 +400,11 @@ impl Database {
             }
         }
 
+        // Filter by minimum score threshold if specified
+        if let Some(min_sim) = min_score {
+            scored_clauses.retain(|item| item.1 >= min_sim);
+        }
+
         // Sort by status priority first, then cosine similarity descending
         scored_clauses.sort_by(|a, b| {
             let status_rank = |s: &str| match s {
@@ -429,10 +434,10 @@ impl Database {
     }
 
     /// Hybrid Search: Combining SQLite FTS5 (Trigram) and BGE-M3 (Dense Vector) with Reciprocal Rank Fusion (RRF)
-    pub fn search_hybrid(&self, query: &str, query_vector: &[f32], limit: usize, status_filter: Option<&str>) -> Result<Vec<SearchResult>> {
+    pub fn search_hybrid(&self, query: &str, query_vector: &[f32], limit: usize, status_filter: Option<&str>, min_score: Option<f64>) -> Result<Vec<SearchResult>> {
         let candidate_limit = (limit * 3).max(20);
         let fts_results = self.search(query, candidate_limit, status_filter)?;
-        let vec_results = self.search_vector(query_vector, candidate_limit, status_filter)?;
+        let vec_results = self.search_vector(query_vector, candidate_limit, status_filter, min_score)?;
 
         // RRF Constant k = 60
         const K: f64 = 60.0;

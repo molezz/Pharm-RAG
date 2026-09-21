@@ -6,6 +6,10 @@ pub struct RegulatoryParser {
     re_section: Regex,
     re_article: Regex,
     re_noise: Regex,
+    re_toc_dots: Regex,
+    re_toc_dots_page: Regex,
+    re_toc_entry: Regex,
+    re_toc_title: Regex,
 }
 
 impl Default for RegulatoryParser {
@@ -31,7 +35,45 @@ impl RegulatoryParser {
 
             // 过滤页眉页脚噪点
             re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|\d+\s*/\s*\d+|April 25, 2023|June 8, 2023)$").unwrap(),
+
+            // 目录过滤特征：点导线（连续点/省略号/下划线）
+            re_toc_dots: Regex::new(r"(\.{3,}|…{2,}|(?:\.\s*){3,}|·{3,}|_{4,})").unwrap(),
+            // 点导线或点结尾接页码（如 "...... 12" 或 "... 4"）
+            re_toc_dots_page: Regex::new(r"(\.{2,}|…|(?:\.\s*){2,}|·{2,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
+            // 目录条目特征：标题紧接页码
+            re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\s{2,}|\?|\.\s*)(\d+|[ivxldcm]+)\s*$").unwrap(),
+            // 目录标题标记
+            re_toc_title: Regex::new(r"(?i)^(-{3,}\s*)?(目\s*录|table of contents|contents)\s*(-{3,})?$").unwrap(),
         }
+    }
+
+    /// Check if a text chunk is a Table of Contents entry or catalogue title
+    pub fn is_toc(&self, text: &str) -> bool {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if self.re_toc_title.is_match(trimmed) {
+            return true;
+        }
+        if let Some(last_line) = trimmed.lines().last() {
+            if self.re_toc_title.is_match(last_line.trim()) {
+                return true;
+            }
+        }
+        if self.re_toc_dots.is_match(trimmed) || self.re_toc_dots_page.is_match(trimmed) {
+            return true;
+        }
+        if trimmed.len() < 300 && self.re_toc_entry.is_match(trimmed) {
+            return true;
+        }
+        false
+    }
+
+    /// Clean trailing dot leaders and page numbers from heading titles
+    pub fn clean_heading(text: &str) -> String {
+        let re_trailing = Regex::new(r"[\s\.·…_]{2,}\s*(\d+|[ivxldcm]+)?\s*$").unwrap();
+        re_trailing.replace(text.trim(), "").trim().to_string()
     }
 
     /// Automatically determine regulatory lifecycle status
@@ -58,6 +100,7 @@ impl RegulatoryParser {
         let mut current_article = String::new();
         let mut current_lines = Vec::new();
         let mut current_page: Option<i32> = None;
+        let mut in_toc = false;
 
         let re_page = Regex::new(r"(?i)\[Page\s*(\d+)\]|---\s*第\s*(\d+)\s*页\s*---|第\s*(\d+)\s*页(?:\s*[/共]|\s*$)|(?:^|\b)Page\s+(\d+)\b|(?m)^\s*(\d{1,4})\s*$").unwrap();
 
@@ -69,31 +112,37 @@ impl RegulatoryParser {
                             page: Option<i32>| {
             let content = lines.join("\n").trim().to_string();
             if !content.is_empty() {
-                let mut parts = vec![doc_title.to_string()];
-                if !chapter.is_empty() {
-                    parts.push(chapter.to_string());
-                }
-                if !section.is_empty() {
-                    parts.push(section.to_string());
-                }
-                if !article.is_empty() {
-                    parts.push(article.to_string());
-                }
-                let breadcrumb = parts.join(" > ");
+                // Secondary safeguard: Discard if content is a TOC entry or empty header duplicate
+                let is_toc_content = self.is_toc(&content)
+                    || (lines.len() <= 2 && content.chars().count() < 120 && (content == article || content == chapter));
 
-                clauses.push(Clause {
-                    id: None,
-                    doc_id: None,
-                    doc_title: doc_title.to_string(),
-                    chapter: chapter.to_string(),
-                    section: section.to_string(),
-                    article: article.to_string(),
-                    breadcrumb,
-                    page_num: page,
-                    content,
-                    table_data: None,
-                    status: status.clone(),
-                });
+                if !is_toc_content {
+                    let mut parts = vec![doc_title.to_string()];
+                    if !chapter.is_empty() {
+                        parts.push(chapter.to_string());
+                    }
+                    if !section.is_empty() {
+                        parts.push(section.to_string());
+                    }
+                    if !article.is_empty() {
+                        parts.push(article.to_string());
+                    }
+                    let breadcrumb = parts.join(" > ");
+
+                    clauses.push(Clause {
+                        id: None,
+                        doc_id: None,
+                        doc_title: doc_title.to_string(),
+                        chapter: chapter.to_string(),
+                        section: section.to_string(),
+                        article: article.to_string(),
+                        breadcrumb,
+                        page_num: page,
+                        content,
+                        table_data: None,
+                        status: status.clone(),
+                    });
+                }
             }
             lines.clear();
         };
@@ -106,6 +155,43 @@ impl RegulatoryParser {
 
             // Filter repeating header/footer noise
             if self.re_noise.is_match(trimmed) {
+                continue;
+            }
+
+            // Check if this line starts a Table of Contents block
+            if self.re_toc_title.is_match(trimmed) {
+                if current_chapter.is_empty() && current_article.is_empty() {
+                    current_lines.clear();
+                } else {
+                    flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
+                }
+                current_chapter.clear();
+                current_section.clear();
+                current_article.clear();
+                in_toc = true;
+                continue;
+            }
+
+            // If inside TOC block, determine if document body has started
+            if in_toc {
+                if self.is_toc(trimmed) {
+                    continue;
+                }
+
+                // Check for start of substantive document body or clean chapter heading
+                let is_substantive = trimmed.len() > 60 && !trimmed.ends_with("...") && (trimmed.ends_with('.') || trimmed.ends_with('。') || trimmed.ends_with(';') || trimmed.ends_with('；'));
+                let is_clean_chapter = self.re_chapter.is_match(trimmed) && !self.is_toc(trimmed);
+
+                if is_substantive || is_clean_chapter {
+                    in_toc = false;
+                } else {
+                    // Still part of TOC preamble
+                    continue;
+                }
+            }
+
+            // Standalone TOC line filter (works even if document lacked TOC title header)
+            if self.is_toc(trimmed) {
                 continue;
             }
 
@@ -127,7 +213,8 @@ impl RegulatoryParser {
             // Check Chapter
             if let Some(caps) = self.re_chapter.captures(trimmed) {
                 flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
-                current_chapter = caps.get(0).map_or("", |m| m.as_str()).to_string();
+                let raw_ch = caps.get(0).map_or("", |m| m.as_str());
+                current_chapter = Self::clean_heading(raw_ch);
                 current_section.clear();
                 current_article.clear();
                 continue;
@@ -136,7 +223,8 @@ impl RegulatoryParser {
             // Check Section
             if let Some(caps) = self.re_section.captures(trimmed) {
                 flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
-                current_section = caps.get(0).map_or("", |m| m.as_str()).to_string();
+                let raw_sec = caps.get(0).map_or("", |m| m.as_str());
+                current_section = Self::clean_heading(raw_sec);
                 current_article.clear();
                 continue;
             }
@@ -144,16 +232,17 @@ impl RegulatoryParser {
             // Check Article / FAQ Question
             if let Some(caps) = self.re_article.captures(trimmed) {
                 flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
-                current_article = caps.get(0).map_or("", |m| m.as_str()).to_string();
-                current_lines.push(trimmed.to_string());
+                let raw_art = caps.get(0).map_or("", |m| m.as_str());
+                current_article = Self::clean_heading(raw_art);
+                current_lines.push(current_article.clone());
                 continue;
             }
 
             // Town hall / transcript special: Italicized or bold questions ending with ?
             if trimmed.ends_with('?') && (trimmed.starts_with("What") || trimmed.starts_with("How") || trimmed.starts_with("Can") || trimmed.starts_with("Is") || trimmed.starts_with("Could")) {
                 flush_clause(&mut clauses, &current_chapter, &current_section, &current_article, &mut current_lines, current_page);
-                current_article = trimmed.to_string();
-                current_lines.push(trimmed.to_string());
+                current_article = Self::clean_heading(trimmed);
+                current_lines.push(current_article.clone());
                 continue;
             }
 
@@ -168,7 +257,7 @@ impl RegulatoryParser {
         if clauses.is_empty() && !raw_text.trim().is_empty() {
             for (idx, para) in raw_text.split("\n\n").enumerate() {
                 let trimmed = para.trim();
-                if !trimmed.is_empty() {
+                if !trimmed.is_empty() && !self.is_toc(trimmed) {
                     clauses.push(Clause {
                         id: None,
                         doc_id: None,

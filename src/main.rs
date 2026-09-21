@@ -55,6 +55,12 @@ enum Commands {
         /// Only show in-force regulations (effective and trial), filtering out drafts
         #[arg(long)]
         only_effective: bool,
+        /// Minimum relevance score threshold (for dense semantic retrieval, typically 0.3 - 0.7)
+        #[arg(long)]
+        min_score: Option<f64>,
+        /// Exclude table-of-contents / catalogue entries
+        #[arg(long)]
+        exclude_toc: bool,
         /// Output formatted JSON instead of human-readable text
         #[arg(long)]
         json: bool,
@@ -128,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("\n✨ 语义向量嵌入生成完毕！");
             }
         }
-        Commands::Search { query, limit, hybrid, model_dir, status, only_effective, json } => {
+        Commands::Search { query, limit, hybrid, model_dir, status, only_effective, min_score, exclude_toc, json } => {
             let db = Database::open(&db_path)?;
             let status_filter = if only_effective {
                 Some("effective")
@@ -137,13 +143,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let start = std::time::Instant::now();
-            let results = if hybrid {
+            let mut results = if hybrid {
                 let engine = pharmrag::storage::SemanticEngine::new(model_dir, true)?;
                 let q_vec = engine.embed_query(&query)?;
-                db.search_hybrid(&query, &q_vec, limit, status_filter)?
+                db.search_hybrid(&query, &q_vec, limit, status_filter, min_score)?
             } else {
-                db.search(&query, limit, status_filter)?
+                let mut res = db.search(&query, limit, status_filter)?;
+                if let Some(threshold) = min_score {
+                    res.retain(|r| r.score >= threshold);
+                }
+                res
             };
+
+            if exclude_toc {
+                let parser = pharmrag::parser::regulatory::RegulatoryParser::new();
+                results.retain(|r| !parser.is_toc(&r.clause.content) && !parser.is_toc(&r.clause.article));
+            }
+
+            results.truncate(limit);
             let elapsed = start.elapsed();
 
             if json {

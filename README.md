@@ -152,7 +152,10 @@ pharmRAG search "RCL 检测" --only-effective
 # 4. 指定仅检索征求意见稿，了解药监审评最新风向
 pharmRAG search "复制型病毒" --status draft
 
-# 5. 指定返回最多 3 条，并输出格式化 JSON 供下游代码或 Agent 解析
+# 5. 设置相关性分数阈值（如过滤无关硬凑结果）与排除目录条目
+pharmRAG search "药学变更" --hybrid --min-score 0.4 --exclude-toc
+
+# 6. 指定返回最多 3 条，并输出格式化 JSON 供下游代码或 Agent 解析
 pharmRAG search "药学变更 控制" --limit 3 --json
 ```
 

@@ -129,4 +129,69 @@ fn test_like_wildcard_escaping() {
     assert_eq!(res_none.len(), 0);
 }
 
+#[test]
+fn test_toc_filtering() {
+    let parser = RegulatoryParser::new();
+
+    // Chinese document with TOC
+    let zh_text = r#"
+CAR-T 2023 11
+目录
+一、前言 .......................................................................................................... 4
+二、常见问题与技术要求 .......................................................................... 4
+1、药学变更一般原则 .......................................................................... 4
+2、变更研究的特殊性 .......................................................................... 6
+3、变更可比性研究方案 ...................................................................... 8
+4、生产场地、生产线（生产模块）、生产频次的变更（工艺不变）
+............................................................................................................. 10
+5、生产场地、生产线的变更（工艺改变） ..................................... 12
+
+一、前言
+近年来，中国自体CAR-T细胞治疗产品研发迅速。本指导原则旨在规范药学变更研究。
+
+二、常见问题与技术要求
+1、药学变更一般原则
+药学变更研究应遵循基于风险的原则。在产品生命周期中，应建立有效的产品质量控制策略。
+"#;
+
+    let zh_clauses = parser.parse("自体CAR-T药学变更", zh_text);
+    // TOC lines should be filtered out; only real clauses should be present
+    assert_eq!(zh_clauses.len(), 2, "Should only have 2 real clauses, not TOC entries");
+    assert_eq!(zh_clauses[0].chapter, "一、前言");
+    assert!(zh_clauses[0].content.contains("中国自体CAR-T细胞治疗产品"));
+    assert_eq!(zh_clauses[1].chapter, "二、常见问题与技术要求");
+    assert_eq!(zh_clauses[1].article, "1、药学变更一般原则");
+    assert_eq!(zh_clauses[1].breadcrumb, "自体CAR-T药学变更 > 二、常见问题与技术要求 > 1、药学变更一般原则");
+
+    // English document with TOC
+    let en_text = r#"
+Table of Contents
+I.  INTRODUCTION ......................................................................................... 1
+II.  BACKGROUND ........................................................................................... 1
+III.  SUBMISSIONS AND FDA REVIEW ............................................................. 2
+A.  IND Submission and Quality ............................................................................... 2
+Q1.  What should sponsors know about electronic submission of an Investigational
+New Drug application? ..................................................................................... 2
+Q2.  What is important for inclusion in an original IND submission? ..................... 4
+Q3.  What regulatory forms are included in original INDs and IND amendments?  8
+
+I.  INTRODUCTION
+This guidance is intended to provide industry with answers to frequently asked questions.
+
+III.  SUBMISSIONS AND FDA REVIEW
+A.  IND Submission and Quality
+Q1.  What should sponsors know about electronic submission of an Investigational New Drug application?
+Commercial INDs must be submitted consistent with the eCTD requirements.
+"#;
+
+    let en_clauses = parser.parse("FDA-FAQs", en_text);
+    assert_eq!(en_clauses.len(), 2, "Should only parse real substantive clauses");
+    assert_eq!(en_clauses[0].chapter, "I.  INTRODUCTION");
+    assert_eq!(en_clauses[1].chapter, "III.  SUBMISSIONS AND FDA REVIEW");
+    assert_eq!(en_clauses[1].section, "A.  IND Submission and Quality");
+    assert_eq!(en_clauses[1].article, "Q1.  What should sponsors know about electronic submission of an Investigational New Drug application?");
+    assert!(!en_clauses[1].breadcrumb.contains("..."), "Breadcrumb must not contain dot leaders");
+}
+
+
 
