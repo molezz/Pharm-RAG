@@ -44,6 +44,16 @@ jobs:
 
       - name: Cargo Test
         run: |
-          cargo test --verbose || { echo "Cargo test failed"; exit 1; }
+          cargo test --verbose 2>&1 | tee cargo_test.log
+
+      - name: Upload Test Failure Log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-test-${{ matrix.os }}-log
+          path: |
+            cargo_check.log
+            cargo_test.log
+
 
 
