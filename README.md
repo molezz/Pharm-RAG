@@ -88,14 +88,20 @@ flowchart TD
 
 ### 1. 安装方式
  
-#### 方式 A：直接下载预编译二进制包（推荐）
-从 [GitHub Releases](https://github.com/molezz/PharmRAG/releases) 页面下载对应操作系统的压缩包，解压后即可直接运行：
+#### 方式 A：直接下载预编译二进制包（推荐，无需 Rust 环境）
+从 [GitHub Releases](https://github.com/molezz/PharmRAG/releases) 页面下载对应操作系统的压缩包，或直接在终端一键安装：
+
 ```bash
-# 解压即可使用（支持 pharmrag 或 pharmRAG 命名）
-tar -zxvf pharmrag-linux-x86_64.tar.gz
-chmod +x pharmrag
-./pharmrag --help
+# Linux x86_64 极速安装：
+curl -sL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-x86_64.tar.gz" | tar -xz -C /tmp/ && sudo mv /tmp/pharmrag /usr/local/bin/pharmrag && chmod +x /usr/local/bin/pharmrag
+
+# Linux ARM64 (aarch64) 极速安装（如各类 ARM 云服务器）：
+curl -sL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-aarch64.tar.gz" | tar -xz -C /tmp/ && sudo mv /tmp/pharmrag /usr/local/bin/pharmrag && chmod +x /usr/local/bin/pharmrag
+
+# 验证安装
+pharmrag --help
 ```
+
 
 #### 方式 B：从源码编译（需安装 Rust）
 ```bash
