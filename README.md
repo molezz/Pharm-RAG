@@ -93,12 +93,12 @@ flowchart TD
 
 ```bash
 # Linux x86_64 极速安装：
-curl -sL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-x86_64.tar.gz" | tar -xz -C /tmp/ && sudo mv /tmp/pharmrag /usr/local/bin/pharmrag && chmod +x /usr/local/bin/pharmrag
+(set -e; TMP_DIR=$(mktemp -d); curl -fL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-x86_64.tar.gz" | tar -xz -C "$TMP_DIR" && sudo mv "$TMP_DIR/pharmrag" /usr/local/bin/pharmrag && sudo ln -sf /usr/local/bin/pharmrag /usr/local/bin/pharmRAG && chmod +x /usr/local/bin/pharmrag && rm -rf "$TMP_DIR")
 
 # Linux ARM64 (aarch64) 极速安装（如各类 ARM 云服务器）：
-curl -sL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-aarch64.tar.gz" | tar -xz -C /tmp/ && sudo mv /tmp/pharmrag /usr/local/bin/pharmrag && chmod +x /usr/local/bin/pharmrag
+(set -e; TMP_DIR=$(mktemp -d); curl -fL "https://github.com/molezz/PharmRAG/releases/latest/download/pharmrag-linux-aarch64.tar.gz" | tar -xz -C "$TMP_DIR" && sudo mv "$TMP_DIR/pharmrag" /usr/local/bin/pharmrag && sudo ln -sf /usr/local/bin/pharmrag /usr/local/bin/pharmRAG && chmod +x /usr/local/bin/pharmrag && rm -rf "$TMP_DIR")
 
-# 验证安装
+# 验证安装（pharmrag 或 pharmRAG 均可执行）
 pharmrag --help
 ```
 

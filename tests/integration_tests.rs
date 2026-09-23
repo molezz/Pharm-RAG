@@ -217,6 +217,16 @@ fn test_tail_clause_ending_with_number_and_ellipsis_preserved() {
     assert!(clauses[1].content.ends_with("0.25"));
     assert!(clauses[2].content.contains("……"));
     assert!(clauses[2].content.ends_with("6.5"));
+
+    // Also verify 3-char and 4-char Chinese ellipsis in regular clauses
+    let text_ellipsis = r#"
+第一章 质量要求
+第一条 蛋白质纯度
+结合生产工艺参数优化情况………终产品的微粒数应小于 6000 粒。
+"#;
+    let clauses_el = parser.parse("质量控制标准", text_ellipsis);
+    assert_eq!(clauses_el.len(), 1, "Clause with 3-char ellipsis ……… must not be falsely dropped");
+    assert!(clauses_el[0].content.contains("………"));
 }
 
 #[test]

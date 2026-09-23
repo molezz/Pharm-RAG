@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.5] - 2026-09-23
+
+### Fixed
+- **P0: 彻底消除中文省略号在条款正文中被误杀导致数据丢失的缺陷**：
+  - 精确界定点导线（dot leaders）与正文省略号的判定边界；
+  - 允许 3~4 个连续省略号字符（如 `……`、`………`）出现在法规正文中而不被误判为 TOC；
+  - 目录过滤特征限制为仅在短文本目次行或存在明显页码导向（`re_toc_dots_page`）时生效，彻底防止条款静默丢失。
+
+### Added & Security
+- **GitHub Actions Linux ARM64 (aarch64) 官方原生预编译矩阵**：
+  - `release.yml` 加入 `ubuntu-24.04-arm` 原生 Runner 构建，正式生成 `pharmrag-linux-aarch64.tar.gz` 发布资产，为 ARM64 服务器提供零编译极速安装。
+- **安全加固一键安装脚本**：
+  - 采用 `set -e`、`curl -fL`（失败立即退出避免写入 404 HTML）与 `mktemp -d` 独立临时目录，规避多用户 `/tmp` 碰撞与软链接提权风险。
+  - 自动创建 `/usr/local/bin/pharmRAG` 软链接，保证 `pharmrag` 与 `pharmRAG` 别名一致可用。
+
+---
+
 ## [v0.2.4] - 2026-09-21
 
 ### Added

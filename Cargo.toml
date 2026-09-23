@@ -1,6 +1,6 @@
 [package]
 name = "pharmrag"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 authors = ["PharmRAG Contributors"]
 description = "Pharmaceutical Regulatory and GxP SOP Retrieval Engine"

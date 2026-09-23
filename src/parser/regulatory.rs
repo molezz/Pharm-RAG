@@ -36,9 +36,11 @@ impl RegulatoryParser {
             // 过滤页眉页脚固定文本噪点（注意：页码如 1 / 49 交由 re_page 处理，不在此丢弃）
             re_noise: Regex::new(r"(?i)^(FDA CBER OTP Town Hall Series|Contains Nonbinding Recommendations|Guidance for Industry|Food and Drug Administration|April 25, 2023|June 8, 2023)$").unwrap(),
 
-            // 目录过滤特征：真正的点导线（连续4个及以上的半角点、全角点 U+FF0E、下划线、中间点，或3个以上的省略号字符）
-            re_toc_dots: Regex::new(r"(\.{4,}|．{4,}|…{3,}|(?:\.\s*){4,}|(?:．\s*){4,}|·{4,}|_{4,})").unwrap(),
-            // 点导线结尾接页码（至少3个导线点紧跟页码，排除小数如 0.5）
+            // 目录过滤特征：真正的点导线（连续4个及以上的半角点、全角点 U+FF0E、下划线、中间点）
+            // 注意：中文省略号（……或………）常在条款正文中出现，不能仅凭出现省略号就判为 TOC。
+            // 目录中的省略号/点导线必须有引导至页码的特征，或至少连续5个以上的省略号字符
+            re_toc_dots: Regex::new(r"(\.{4,}|．{4,}|(?:\.\s*){4,}|(?:．\s*){4,}|·{4,}|_{4,}|…{5,})").unwrap(),
+            // 点导线结尾接页码（至少2个省略号或3个点导线紧跟页码，排除常规正文小数如 0.5）
             re_toc_dots_page: Regex::new(r"(\.{3,}|．{3,}|…{2,}|(?:\.\s*){3,}|(?:．\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
             // 目录条目特征：标题紧接点导线与页码（必须包含真正的导线点，裸尾部数字不算证据）
             re_toc_entry: Regex::new(r"(?is)^(第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|Q\d+[\.:\s]|Question\s*\d+|[IVXLCDM]+\.\s+|[A-Z]\.\s+|\d+[\.、]).+?(\.{3,}|．{3,}|…{2,}|(?:\.\s*){3,}|(?:．\s*){3,}|·{3,})\s*(\d+|[ivxldcm]+)\s*$").unwrap(),
@@ -61,10 +63,14 @@ impl RegulatoryParser {
                 return true;
             }
         }
-        if self.re_toc_dots.is_match(trimmed) || self.re_toc_dots_page.is_match(trimmed) {
+        if self.re_toc_dots_page.is_match(trimmed) {
             return true;
         }
         if trimmed.len() < 300 && self.re_toc_entry.is_match(trimmed) {
+            return true;
+        }
+        // 只有短文本行（如目次行 < 150 字符）且包含密集长点导线时才作为 TOC
+        if trimmed.len() < 150 && self.re_toc_dots.is_match(trimmed) {
             return true;
         }
         false
